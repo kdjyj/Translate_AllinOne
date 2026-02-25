@@ -97,7 +97,6 @@ public abstract class DrawContextTooltipMixin {
 
         ParsedTooltip parsedTooltip = translate_allinone$parseTooltip(components);
         if (parsedTooltip.hash() != translate_allinone$lastTooltipHash) {
-            ItemTemplateCache.getInstance().clearPendingAndInProgress();
             translate_allinone$lastTooltipHash = parsedTooltip.hash();
         }
 
