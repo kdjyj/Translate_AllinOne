@@ -2,9 +2,14 @@ package com.cedarxuesong.translate_allinone.utils.translate;
 
 public final class TooltipTranslationContext {
     private static final long REI_CONTEXT_STALE_MILLIS = 10_000L;
+    private static final long WYNN_ITEM_STAT_CONTEXT_STALE_MILLIS = 500L;
+    private static final long WYNN_QUEST_CONTEXT_STALE_MILLIS = 10_000L;
     private static final ThreadLocal<Boolean> SKIP_DRAW_CONTEXT_TRANSLATION = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Integer> REI_TOOLTIP_RENDER_DEPTH = ThreadLocal.withInitial(() -> 0);
     private static final ThreadLocal<Long> REI_TOOLTIP_RENDER_ENTERED_AT = ThreadLocal.withInitial(() -> 0L);
+    private static final ThreadLocal<Long> WYNN_ITEM_STAT_TOOLTIP_MARKED_AT = ThreadLocal.withInitial(() -> 0L);
+    private static final ThreadLocal<Integer> WYNN_QUEST_TOOLTIP_RENDER_DEPTH = ThreadLocal.withInitial(() -> 0);
+    private static final ThreadLocal<Long> WYNN_QUEST_TOOLTIP_RENDER_ENTERED_AT = ThreadLocal.withInitial(() -> 0L);
 
     private TooltipTranslationContext() {
     }
@@ -56,6 +61,65 @@ public final class TooltipTranslationContext {
         if (System.currentTimeMillis() - enteredAt > REI_CONTEXT_STALE_MILLIS) {
             REI_TOOLTIP_RENDER_DEPTH.set(0);
             REI_TOOLTIP_RENDER_ENTERED_AT.set(0L);
+            return false;
+        }
+
+        return true;
+    }
+
+    public static void markWynntilsItemStatTooltipRender() {
+        WYNN_ITEM_STAT_TOOLTIP_MARKED_AT.set(System.currentTimeMillis());
+    }
+
+    public static boolean isInWynntilsItemStatTooltipRender() {
+        long markedAt = WYNN_ITEM_STAT_TOOLTIP_MARKED_AT.get();
+        if (markedAt <= 0L) {
+            return false;
+        }
+
+        if (System.currentTimeMillis() - markedAt > WYNN_ITEM_STAT_CONTEXT_STALE_MILLIS) {
+            WYNN_ITEM_STAT_TOOLTIP_MARKED_AT.set(0L);
+            return false;
+        }
+
+        return true;
+    }
+
+    public static void pushWynntilsQuestTooltipRender() {
+        int currentDepth = WYNN_QUEST_TOOLTIP_RENDER_DEPTH.get();
+        if (currentDepth <= 0) {
+            WYNN_QUEST_TOOLTIP_RENDER_ENTERED_AT.set(System.currentTimeMillis());
+            WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(1);
+            return;
+        }
+        WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(currentDepth + 1);
+    }
+
+    public static void popWynntilsQuestTooltipRender() {
+        int depth = WYNN_QUEST_TOOLTIP_RENDER_DEPTH.get();
+        if (depth <= 1) {
+            WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(0);
+            WYNN_QUEST_TOOLTIP_RENDER_ENTERED_AT.set(0L);
+            return;
+        }
+        WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(depth - 1);
+    }
+
+    public static boolean isInWynntilsQuestTooltipRender() {
+        int depth = WYNN_QUEST_TOOLTIP_RENDER_DEPTH.get();
+        if (depth <= 0) {
+            return false;
+        }
+
+        long enteredAt = WYNN_QUEST_TOOLTIP_RENDER_ENTERED_AT.get();
+        if (enteredAt <= 0L) {
+            WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(0);
+            return false;
+        }
+
+        if (System.currentTimeMillis() - enteredAt > WYNN_QUEST_CONTEXT_STALE_MILLIS) {
+            WYNN_QUEST_TOOLTIP_RENDER_DEPTH.set(0);
+            WYNN_QUEST_TOOLTIP_RENDER_ENTERED_AT.set(0L);
             return false;
         }
 

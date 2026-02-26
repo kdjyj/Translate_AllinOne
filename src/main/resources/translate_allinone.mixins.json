@@ -11,6 +11,8 @@
     "mixinItem.DrawContextItemTooltipMixin",
     "mixinItem.DrawContextTooltipMixin",
     "mixinItem.ReiScreenOverlayContextMixin",
+    "mixinItem.WynntilsItemStatInfoContextMixin",
+    "mixinItem.WynntilsQuestTooltipContextMixin",
     "mixinItem.OrderedTextTooltipComponentAccessor",
     "mixinInGameGui.InGameHudMixin",
     "mixinInGameGui.InGameHudAccessor",

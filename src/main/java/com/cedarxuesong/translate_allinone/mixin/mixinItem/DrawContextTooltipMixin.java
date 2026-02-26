@@ -73,6 +73,7 @@ public abstract class DrawContextTooltipMixin {
             return;
         }
 
+        boolean isWynntilsItemStatTooltip = TooltipTranslationContext.isInWynntilsItemStatTooltipRender();
         if (TooltipTranslationContext.consumeSkipDrawContextTranslation()) {
             return;
         }
@@ -91,7 +92,7 @@ public abstract class DrawContextTooltipMixin {
             return;
         }
 
-        if (!translate_allinone$isReiOrFirmamentTooltip(positioner)) {
+        if (!translate_allinone$isSupportedExternalTooltip(positioner, isWynntilsItemStatTooltip)) {
             return;
         }
 
@@ -212,7 +213,14 @@ public abstract class DrawContextTooltipMixin {
     }
 
     @Unique
-    private boolean translate_allinone$isReiOrFirmamentTooltip(TooltipPositioner positioner) {
+    private boolean translate_allinone$isSupportedExternalTooltip(
+            TooltipPositioner positioner,
+            boolean isWynntilsItemStatTooltip
+    ) {
+        if (isWynntilsItemStatTooltip || TooltipTranslationContext.isInWynntilsQuestTooltipRender()) {
+            return true;
+        }
+
         if (TooltipTranslationContext.isInReiTooltipRender()) {
             return true;
         }
