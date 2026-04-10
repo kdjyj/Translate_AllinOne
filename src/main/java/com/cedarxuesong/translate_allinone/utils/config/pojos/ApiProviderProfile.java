@@ -38,6 +38,18 @@ public class ApiProviderProfile {
         return profile;
     }
 
+    public static ApiProviderProfile createAliyunDefault() {
+        ApiProviderProfile profile = new ApiProviderProfile();
+        profile.id = "aliyun_bailian_default";
+        profile.name = "Aliyun Bailian";
+        profile.type = ApiProviderType.ALIYUN_BAILIAN;
+        profile.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        profile.model_id = "qwen3.6-plus";
+        profile.model_ids = new ArrayList<>(List.of("qwen3.6-plus"));
+        profile.model_settings = new ArrayList<>(List.of(ModelSettings.openAiDefault("qwen3.6-plus")));
+        return profile;
+    }
+
     public static ApiProviderProfile createOllamaDefault() {
         ApiProviderProfile profile = new ApiProviderProfile();
         profile.id = "ollama_default";

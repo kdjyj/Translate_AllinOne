@@ -6,6 +6,7 @@
 
   "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.OPENAI": "OpenAI",
   "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.OLLAMA": "Ollama",
+  "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.ALIYUN_BAILIAN": "阿里云百炼",
 
   "text.autoconfig.translate_allinone/translate_allinone.option.chatTranslate.output": "输出区翻译",
   "text.autoconfig.translate_allinone/translate_allinone.option.chatTranslate.output.enabled": "启用输出区翻译",
@@ -288,6 +289,7 @@
   "text.translate_allinone.configscreen.provider_type.openai_compat": "OpenAI",
   "text.translate_allinone.configscreen.provider_type.openai_response": "OpenAI-Response",
   "text.translate_allinone.configscreen.provider_type.ollama": "Ollama",
+  "text.translate_allinone.configscreen.provider_type.aliyun_bailian": "阿里云百炼",
   "text.translate_allinone.configscreen.provider_view.routing": "路由",
   "text.translate_allinone.configscreen.provider_view.details": "详情",
   "text.translate_allinone.configscreen.route.item": "物品",

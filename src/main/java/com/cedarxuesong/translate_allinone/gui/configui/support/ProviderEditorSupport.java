@@ -15,13 +15,16 @@ public final class ProviderEditorSupport {
             case OPENAI_COMPAT -> "OpenAI";
             case OPENAI_RESPONSE -> "OpenAI-Response";
             case OLLAMA -> "Ollama";
+            case ALIYUN_BAILIAN -> "Aliyun Bailian";
         };
     }
 
     public static ApiProviderProfile createProfileByType(ApiProviderType type) {
-        ApiProviderProfile profile = type == ApiProviderType.OLLAMA
-                ? ApiProviderProfile.createOllamaDefault()
-                : ApiProviderProfile.createOpenAiDefault();
+        ApiProviderProfile profile = switch (type) {
+            case OLLAMA -> ApiProviderProfile.createOllamaDefault();
+            case ALIYUN_BAILIAN -> ApiProviderProfile.createAliyunDefault();
+            case OPENAI_COMPAT, OPENAI_RESPONSE -> ApiProviderProfile.createOpenAiDefault();
+        };
         profile.type = type;
         applyProviderTypeDefaults(profile);
         return profile;
@@ -52,6 +55,7 @@ public final class ProviderEditorSupport {
             case OLLAMA -> "/api/chat";
             case OPENAI_RESPONSE -> "/responses";
             case OPENAI_COMPAT -> "/chat/completions";
+            case ALIYUN_BAILIAN -> "/chat/completions";
         };
         return baseUrl.isEmpty() ? endpoint : baseUrl + endpoint;
     }
@@ -73,6 +77,13 @@ public final class ProviderEditorSupport {
             }
             if (profile.model_id == null || profile.model_id.isBlank()) {
                 profile.model_id = "qwen3:0.6b";
+            }
+        } else if (profile.type == ApiProviderType.ALIYUN_BAILIAN) {
+            if (profile.base_url == null || profile.base_url.isBlank()) {
+                profile.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+            }
+            if (profile.model_id == null || profile.model_id.isBlank()) {
+                profile.model_id = "qwen3.6-plus";
             }
         } else {
             if (profile.base_url == null || profile.base_url.isBlank()) {

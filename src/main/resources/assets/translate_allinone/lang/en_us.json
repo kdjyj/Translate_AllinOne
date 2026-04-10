@@ -6,6 +6,7 @@
 
   "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.OPENAI": "OpenAI",
   "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.OLLAMA": "Ollama",
+  "text.autoconfig.translate_allinone/translate_allinone.enum.Provider.ALIYUN_BAILIAN": "Aliyun Bailian",
 
   "text.autoconfig.translate_allinone/translate_allinone.option.chatTranslate.output.openapi.baseUrl.@PrefixText": "§eThese settings are only used when 'OpenAI' is selected above.",
   "text.autoconfig.translate_allinone/translate_allinone.option.chatTranslate.output.ollama.ollamaUrl.@PrefixText": "§eThese settings are only used when 'Ollama' is selected above.",
@@ -292,6 +293,7 @@
   "text.translate_allinone.configscreen.provider_type.openai_compat": "OpenAI",
   "text.translate_allinone.configscreen.provider_type.openai_response": "OpenAI-Response",
   "text.translate_allinone.configscreen.provider_type.ollama": "OLLAMA",
+  "text.translate_allinone.configscreen.provider_type.aliyun_bailian": "Aliyun Bailian",
   "text.translate_allinone.configscreen.provider_view.routing": "Routing",
   "text.translate_allinone.configscreen.provider_view.details": "Details",
   "text.translate_allinone.configscreen.route.item": "ITEM",

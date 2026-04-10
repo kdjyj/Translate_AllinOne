@@ -30,6 +30,7 @@ An in-game AI translation mod for Minecraft that supports chat, chat input, item
 - Provider types:
   - `OPENAI_COMPAT` (`/chat/completions`)
   - `OPENAI_RESPONSE` (`/responses`)
+  - `ALIYUN_BAILIAN` (`/chat/completions` via DashScope compatible mode)
   - `OLLAMA` (`/api/chat`)
 - Per-route model selection for:
   - Chat Output
@@ -150,6 +151,7 @@ MIT. See [LICENSE](./LICENSE).
 - 支持的 provider 类型：
   - `OPENAI_COMPAT`（`/chat/completions`）
   - `OPENAI_RESPONSE`（`/responses`）
+  - `ALIYUN_BAILIAN`（通过 DashScope 兼容模式走 `/chat/completions`）
   - `OLLAMA`（`/api/chat`）
 - 可为每个功能模块独立设置路由模型：
   - 聊天输出

@@ -38,7 +38,11 @@ public record ProviderSettings(OpenAISettings openAISettings, OllamaSettings oll
         Map<String, Object> parameters = toParameterMap(activeModelSettings == null ? profile.custom_parameters : activeModelSettings.custom_parameters);
 
         if (modelId == null || modelId.isBlank()) {
-            modelId = providerType == ApiProviderType.OLLAMA ? "qwen3:0.6b" : "gpt-4o";
+            modelId = switch (providerType) {
+                case OLLAMA -> "qwen3:0.6b";
+                case ALIYUN_BAILIAN -> "qwen3.6-plus";
+                default -> "gpt-4o";
+            };
         }
         if (keepAlive == null || keepAlive.isBlank()) {
             keepAlive = "1m";
