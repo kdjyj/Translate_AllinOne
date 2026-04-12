@@ -172,9 +172,10 @@ public class ScoreboardTextCache {
                 Files.move(tempPath, cacheFilePath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-                Translate_AllinOne.LOGGER.info("Successfully saved {} scoreboard translation cache entries.", templateCache.size());
-                isDirty = false;
-                lastSaveAtMillis = System.currentTimeMillis();
+            Translate_AllinOne.LOGGER.info("Successfully saved {} scoreboard translation cache entries.", templateCache.size());
+            CacheBackupManager.maybeBackup(cacheFilePath, "scoreboard translation");
+            isDirty = false;
+            lastSaveAtMillis = System.currentTimeMillis();
         } catch (IOException e) {
             Translate_AllinOne.LOGGER.error("Failed to save scoreboard translation cache", e);
         }

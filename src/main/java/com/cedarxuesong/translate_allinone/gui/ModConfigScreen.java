@@ -7,6 +7,7 @@ import com.cedarxuesong.translate_allinone.gui.configui.controls.ActionBlockRegi
 import com.cedarxuesong.translate_allinone.gui.configui.controls.CheckboxBlock;
 import com.cedarxuesong.translate_allinone.gui.configui.controls.GroupBox;
 import com.cedarxuesong.translate_allinone.gui.configui.controls.IntSliderBlock;
+import com.cedarxuesong.translate_allinone.gui.configui.controls.StaticTextRow;
 import com.cedarxuesong.translate_allinone.gui.configui.interaction.ConfigUiInteractionSupport;
 import com.cedarxuesong.translate_allinone.gui.configui.interaction.ConfigUiModalInteractionSupport;
 import com.cedarxuesong.translate_allinone.gui.configui.model.ConfigSection;
@@ -36,9 +37,11 @@ import com.cedarxuesong.translate_allinone.gui.configui.support.ModelSettingsDra
 import com.cedarxuesong.translate_allinone.gui.configui.support.ModelSettingsMutationSupport;
 import com.cedarxuesong.translate_allinone.gui.configui.support.ProviderManagerMutationSupport;
 import com.cedarxuesong.translate_allinone.gui.configui.support.ProviderProfileSupport;
+import com.cedarxuesong.translate_allinone.utils.cache.CacheBackupManager;
 import com.cedarxuesong.translate_allinone.utils.config.ModConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ApiProviderProfile;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ApiProviderType;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.CustomParameterEntry;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.InputBindingConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
@@ -55,7 +58,11 @@ import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Text;
+import net.minecraft.util.Util;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -63,6 +70,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 public class ModConfigScreen extends Screen {
@@ -117,6 +125,7 @@ public class ModConfigScreen extends Screen {
     private static final int CONTENT_CLIP_SIDE_PADDING = 6;
     private static final int CONTENT_CLIP_TOP_PADDING = 6;
     private static final int CONTENT_CLIP_BOTTOM_PADDING = 8;
+    private static final int CONTENT_SCROLLBAR_GAP = CONTENT_CLIP_SIDE_PADDING;
     private static final IntSliderBlock.Style SLIDER_STYLE = new IntSliderBlock.Style(
             COLOR_BLOCK,
             COLOR_BLOCK_HOVER,
@@ -244,6 +253,7 @@ public class ModConfigScreen extends Screen {
     private final List<ActionBlock> contentActionBlocks = new ArrayList<>();
     private final List<ActionBlock> floatingActionBlocks = new ArrayList<>();
     private final List<GroupBox> groupBoxes = new ArrayList<>();
+    private final List<StaticTextRow> staticTextRows = new ArrayList<>();
     private final List<CheckboxBlock> checkboxBlocks = new ArrayList<>();
     private final List<CheckboxBlock> floatingCheckboxBlocks = new ArrayList<>();
     private final ActionBlockRegistry actionBlockRegistry = new ActionBlockRegistry(actionBlocks, COLOR_BLOCK, COLOR_BLOCK_HOVER, COLOR_TEXT);
@@ -397,6 +407,7 @@ public class ModConfigScreen extends Screen {
         contentActionBlocks.clear();
         floatingActionBlocks.clear();
         groupBoxes.clear();
+        staticTextRows.clear();
         checkboxBlocks.clear();
         floatingCheckboxBlocks.clear();
         sliderBlocks.clear();
@@ -474,7 +485,7 @@ public class ModConfigScreen extends Screen {
 
         int x = LEFT_PANEL_WIDTH + 20;
         int y = TOP_BAR_HEIGHT + 28;
-        int width = this.width - x - 16;
+        int width = contentLayoutWidth();
         int contentStartY = y - currentRenderScrollOffset();
 
         int contentBottomY = ConfigSectionContentSupport.render(
@@ -494,6 +505,7 @@ public class ModConfigScreen extends Screen {
                 this::startHotkeyCapture,
                 this::clearHotkeyBinding,
                 this::cycleHotkeyMode,
+                this::openCacheDirectory,
                 this::addRouteModelSelector,
                 this::addProviderManagerActions
         );
@@ -509,6 +521,13 @@ public class ModConfigScreen extends Screen {
         return new UiRect(x, y, width, height);
     }
 
+    private int contentLayoutWidth() {
+        return Math.max(0, contentViewport.width - SCROLLBAR_WIDTH - CONTENT_SCROLLBAR_GAP);
+    }
+
+    private int contentLayoutRight() {
+        return contentViewport.x + contentLayoutWidth();
+    }
 
     private UiRect contentClipViewport() {
         if (contentViewport.width <= 0 || contentViewport.height <= 0) {
@@ -517,7 +536,7 @@ public class ModConfigScreen extends Screen {
 
         int clipX = Math.max(LEFT_PANEL_WIDTH, contentViewport.x - CONTENT_CLIP_SIDE_PADDING);
         int clipY = Math.max(TOP_BAR_HEIGHT, contentViewport.y - CONTENT_CLIP_TOP_PADDING);
-        int clipRight = Math.min(this.width, contentViewport.right() + CONTENT_CLIP_SIDE_PADDING);
+        int clipRight = Math.min(this.width, contentLayoutRight() + CONTENT_CLIP_SIDE_PADDING);
         int clipBottom = Math.min(this.height, contentViewport.bottom() + CONTENT_CLIP_BOTTOM_PADDING);
         return new UiRect(
                 clipX,
@@ -796,7 +815,7 @@ public class ModConfigScreen extends Screen {
             Consumer<String> changed,
             boolean editable
     ) {
-        return addTextField(x, y, width, maxLength, initialValue, placeholder, changed, editable, false);
+        return addTextField(x, y, width, maxLength, initialValue, placeholder, changed, value -> true, editable, false);
     }
 
     private TextFieldWidget addTextField(
@@ -807,6 +826,35 @@ public class ModConfigScreen extends Screen {
             String initialValue,
             Text placeholder,
             Consumer<String> changed,
+            Predicate<String> textPredicate,
+            boolean editable
+    ) {
+        return addTextField(x, y, width, maxLength, initialValue, placeholder, changed, textPredicate, editable, false);
+    }
+
+    private TextFieldWidget addTextField(
+            int x,
+            int y,
+            int width,
+            int maxLength,
+            String initialValue,
+            Text placeholder,
+            Consumer<String> changed,
+            boolean editable,
+            boolean floating
+    ) {
+        return addTextField(x, y, width, maxLength, initialValue, placeholder, changed, value -> true, editable, floating);
+    }
+
+    private TextFieldWidget addTextField(
+            int x,
+            int y,
+            int width,
+            int maxLength,
+            String initialValue,
+            Text placeholder,
+            Consumer<String> changed,
+            Predicate<String> textPredicate,
             boolean editable,
             boolean floating
     ) {
@@ -822,15 +870,10 @@ public class ModConfigScreen extends Screen {
                 initialValue,
                 placeholder,
                 changed,
+                textPredicate,
                 editable,
                 floating,
-                ConfigUiModalSupport.isAnyModalOpen(
-                        addProviderModalOpen,
-                        modelSettingsModalOpen,
-                        customParametersModalOpen,
-                        resetConfirmModalOpen,
-                        updateNoticeModalOpen
-                )
+                isAnyModalOpen()
         );
     }
 
@@ -1107,8 +1150,14 @@ public class ModConfigScreen extends Screen {
             String initialValue,
             Text placeholder,
             Consumer<String> changed,
+            Predicate<String> textPredicate,
             boolean editable
     ) {
+        if (!editable) {
+            addStaticTextRow(x, y, width, label, Text.literal(initialValue == null ? "" : initialValue));
+            return;
+        }
+
         int labelWidth = Math.min(180, Math.max(120, width / 3));
         int fieldGap = 6;
         int fieldX = x + labelWidth + fieldGap;
@@ -1124,8 +1173,23 @@ public class ModConfigScreen extends Screen {
                 initialValue == null ? "" : initialValue,
                 placeholder,
                 changed,
+                textPredicate,
                 editable
         );
+    }
+
+    private void addStaticTextRow(int x, int y, int width, Text label, Text value) {
+        int labelWidth = Math.min(180, Math.max(120, width / 3));
+        staticTextRows.add(new StaticTextRow(
+                x,
+                y,
+                width,
+                labelWidth,
+                label,
+                value,
+                COLOR_TEXT,
+                COLOR_TEXT_MUTED
+        ));
     }
 
     private Text hotkeyBindingLabel(ConfigSectionContentSupport.HotkeyTarget target, InputBindingConfig binding) {
@@ -1333,6 +1397,18 @@ public class ModConfigScreen extends Screen {
         this.statusMessage = message;
         this.statusColor = color;
         this.statusExpireAtMillis = System.currentTimeMillis() + 4000;
+    }
+
+    private void openCacheDirectory() {
+        Path cacheDirectory = CacheBackupManager.getCacheDirectory();
+        try {
+            Files.createDirectories(cacheDirectory);
+            Util.getOperatingSystem().open(cacheDirectory.toUri());
+            setStatus(t("status.opened_cache_directory", Text.literal(cacheDirectory.toString())), COLOR_STATUS_OK);
+        } catch (IOException e) {
+            Translate_AllinOne.LOGGER.warn("Failed to open cache directory {}", cacheDirectory, e);
+            setStatus(t("status.failed_open_cache_directory"), COLOR_STATUS_ERROR);
+        }
     }
 
     private void saveAndClose() {
@@ -1925,6 +2001,7 @@ public class ModConfigScreen extends Screen {
         ConfigUiDraw.withScissor(context, contentClipViewport(), () -> {
             ConfigUiControlRenderer.drawGroupBoxes(context, this.textRenderer, groupBoxes);
             ConfigUiControlRenderer.drawActionBlocks(context, this.textRenderer, contentActionBlocks, mouseX, mouseY, COLOR_BORDER);
+            ConfigUiControlRenderer.drawStaticTextRows(context, this.textRenderer, staticTextRows);
             ConfigUiControlRenderer.drawSliderBlocks(context, sliderBlocks, mouseX, mouseY);
             ConfigUiControlRenderer.drawCheckboxBlocks(context, this.textRenderer, checkboxBlocks, mouseX, mouseY);
             if (!modalOpen) {

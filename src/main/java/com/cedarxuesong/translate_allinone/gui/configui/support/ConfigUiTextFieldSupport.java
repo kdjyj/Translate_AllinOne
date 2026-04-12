@@ -6,6 +6,7 @@ import net.minecraft.text.Text;
 
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 public final class ConfigUiTextFieldSupport {
     private ConfigUiTextFieldSupport() {
@@ -23,6 +24,7 @@ public final class ConfigUiTextFieldSupport {
             String initialValue,
             Text placeholder,
             Consumer<String> changed,
+            Predicate<String> textPredicate,
             boolean editable,
             boolean floating,
             boolean modalOpen
@@ -37,6 +39,9 @@ public final class ConfigUiTextFieldSupport {
         TextFieldWidget field = new TextFieldWidget(textRenderer, renderX, renderY, width, 20, Text.empty());
         field.setMaxLength(maxLength);
         field.setText(initialValue == null ? "" : initialValue);
+        if (textPredicate != null) {
+            field.setTextPredicate(textPredicate::test);
+        }
         field.setChangedListener(changed);
         field.setPlaceholder(placeholder);
         field.setEditable(editable);

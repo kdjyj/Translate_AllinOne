@@ -3,6 +3,7 @@ package com.cedarxuesong.translate_allinone.registration;
 import com.cedarxuesong.translate_allinone.Translate_AllinOne;
 import com.cedarxuesong.translate_allinone.utils.config.ModConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ChatTranslateConfig;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.InputBindingConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ProviderManagerConfig;
@@ -120,6 +121,9 @@ public class ConfigManager {
         if (configToUse.scoreboardTranslate == null) {
             configToUse.scoreboardTranslate = new ScoreboardConfig();
         }
+        if (configToUse.cacheBackup == null) {
+            configToUse.cacheBackup = new CacheBackupConfig();
+        }
         if (configToUse.providerManager == null) {
             configToUse.providerManager = new ProviderManagerConfig();
         }
@@ -157,6 +161,17 @@ public class ConfigManager {
         if (configToUse.scoreboardTranslate.keybinding.binding == null) {
             configToUse.scoreboardTranslate.keybinding.binding = new InputBindingConfig();
         }
+
+        configToUse.cacheBackup.backup_interval_minutes = clamp(
+                configToUse.cacheBackup.backup_interval_minutes,
+                CacheBackupConfig.MIN_BACKUP_INTERVAL_MINUTES,
+                CacheBackupConfig.MAX_BACKUP_INTERVAL_MINUTES
+        );
+        configToUse.cacheBackup.max_backup_count = clamp(
+                configToUse.cacheBackup.max_backup_count,
+                CacheBackupConfig.MIN_MAX_BACKUP_COUNT,
+                CacheBackupConfig.MAX_MAX_BACKUP_COUNT
+        );
 
         configToUse.providerManager.ensureDefaults();
         return configToUse;

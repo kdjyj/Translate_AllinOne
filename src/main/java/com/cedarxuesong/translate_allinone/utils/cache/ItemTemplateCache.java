@@ -157,9 +157,10 @@ public class ItemTemplateCache {
                 Files.move(tempPath, cacheFilePath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-                Translate_AllinOne.LOGGER.info("Successfully saved {} item translation cache entries.", templateCache.size());
-                isDirty = false;
-                lastSaveAtMillis = System.currentTimeMillis();
+            Translate_AllinOne.LOGGER.info("Successfully saved {} item translation cache entries.", templateCache.size());
+            CacheBackupManager.maybeBackup(cacheFilePath, "item translation");
+            isDirty = false;
+            lastSaveAtMillis = System.currentTimeMillis();
         } catch (IOException e) {
             Translate_AllinOne.LOGGER.error("Failed to save item translation cache", e);
         }

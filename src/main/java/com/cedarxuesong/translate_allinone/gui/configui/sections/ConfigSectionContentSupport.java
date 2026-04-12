@@ -2,7 +2,10 @@ package com.cedarxuesong.translate_allinone.gui.configui.sections;
 
 import com.cedarxuesong.translate_allinone.gui.configui.model.ConfigSection;
 import com.cedarxuesong.translate_allinone.gui.configui.model.RouteSlot;
+import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
+import com.cedarxuesong.translate_allinone.utils.cache.ScoreboardTextCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ChatTranslateConfig;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.InputBindingConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.ModConfig;
@@ -14,6 +17,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 
 public final class ConfigSectionContentSupport {
     private static final int ROW_STEP = 24;
@@ -45,6 +49,7 @@ public final class ConfigSectionContentSupport {
             HotkeyAction hotkeyStartBinding,
             HotkeyAction hotkeyClearBinding,
             HotkeyAction hotkeyCycleMode,
+            Runnable openCacheDirectoryAction,
             RouteSelectorAdder routeSelectorAdder,
             ProviderSectionAdder providerSectionAdder
     ) {
@@ -71,6 +76,7 @@ public final class ConfigSectionContentSupport {
                         output.target_language,
                         translator.t("placeholder.target_language"),
                         value -> output.target_language = sanitizeLanguage(value),
+                        value -> true,
                         true
                 );
                 y += ROW_STEP;
@@ -125,6 +131,7 @@ public final class ConfigSectionContentSupport {
                         input.target_language,
                         translator.t("placeholder.target_language"),
                         value -> input.target_language = sanitizeLanguage(value),
+                        value -> true,
                         true
                 );
                 y += ROW_STEP;
@@ -174,6 +181,7 @@ public final class ConfigSectionContentSupport {
                         item.target_language,
                         translator.t("placeholder.target_language"),
                         value -> item.target_language = sanitizeLanguage(value),
+                        value -> true,
                         true
                 );
                 y += ROW_STEP;
@@ -257,6 +265,7 @@ public final class ConfigSectionContentSupport {
                         scoreboard.target_language,
                         translator.t("placeholder.target_language"),
                         value -> scoreboard.target_language = sanitizeLanguage(value),
+                        value -> true,
                         true
                 );
                 y += ROW_STEP;
@@ -283,6 +292,119 @@ public final class ConfigSectionContentSupport {
                 routeSelectorAdder.add(config.providerManager, RouteSlot.SCOREBOARD, x, y, width);
                 addGroupBox(groupBoxAdder, translator.t("group.route"), x, width, routeStart, routeStart + ROW_STEP);
                 return routeStart + ROW_STEP;
+            }
+            case CACHE -> {
+                CacheBackupConfig resolvedCacheBackup = config.cacheBackup;
+                if (resolvedCacheBackup == null) {
+                    resolvedCacheBackup = new CacheBackupConfig();
+                    config.cacheBackup = resolvedCacheBackup;
+                }
+                CacheBackupConfig cacheBackup = resolvedCacheBackup;
+
+                int policyStart = y;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.backup_interval_minutes"),
+                        5,
+                        Integer.toString(cacheBackup.backup_interval_minutes),
+                        translator.t(
+                                "placeholder.backup_interval_minutes",
+                                CacheBackupConfig.MIN_BACKUP_INTERVAL_MINUTES,
+                                CacheBackupConfig.MAX_BACKUP_INTERVAL_MINUTES
+                        ),
+                        value -> {
+                            Integer parsed = tryParseNonNegativeInt(value);
+                            if (parsed != null && parsed >= CacheBackupConfig.MIN_BACKUP_INTERVAL_MINUTES) {
+                                cacheBackup.backup_interval_minutes = parsed;
+                            }
+                        },
+                        value -> isAllowedNumericInput(value, CacheBackupConfig.MAX_BACKUP_INTERVAL_MINUTES),
+                        true
+                );
+                y += ROW_STEP;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.max_backup_count"),
+                        5,
+                        Integer.toString(cacheBackup.max_backup_count),
+                        translator.t(
+                                "placeholder.max_backup_count",
+                                CacheBackupConfig.MIN_MAX_BACKUP_COUNT,
+                                CacheBackupConfig.MAX_MAX_BACKUP_COUNT
+                        ),
+                        value -> {
+                            Integer parsed = tryParseNonNegativeInt(value);
+                            if (parsed != null && parsed >= CacheBackupConfig.MIN_MAX_BACKUP_COUNT) {
+                                cacheBackup.max_backup_count = parsed;
+                            }
+                        },
+                        value -> isAllowedNumericInput(value, CacheBackupConfig.MAX_MAX_BACKUP_COUNT),
+                        true
+                );
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.backup_policy"), x, width, policyStart, y);
+
+                y += GROUP_GAP;
+                ItemTemplateCache.CacheStats itemStats = ItemTemplateCache.getInstance().getCacheStats();
+                ScoreboardTextCache.CacheStats scoreboardStats = ScoreboardTextCache.getInstance().getCacheStats();
+                int totalTranslated = itemStats.translated() + scoreboardStats.translated();
+                int totalTracked = itemStats.total() + scoreboardStats.total();
+
+                int statsStart = y;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.cache_entries_item"),
+                        64,
+                        translator.t("value.cache_entries", itemStats.translated(), itemStats.total()).getString(),
+                        Text.empty(),
+                        value -> {
+                        },
+                        value -> true,
+                        false
+                );
+                y += ROW_STEP;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.cache_entries_scoreboard"),
+                        64,
+                        translator.t("value.cache_entries", scoreboardStats.translated(), scoreboardStats.total()).getString(),
+                        Text.empty(),
+                        value -> {
+                        },
+                        value -> true,
+                        false
+                );
+                y += ROW_STEP;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.cache_entries_total"),
+                        64,
+                        translator.t("value.cache_entries", totalTranslated, totalTracked).getString(),
+                        Text.empty(),
+                        value -> {
+                        },
+                        value -> true,
+                        false
+                );
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.cache_entries"), x, width, statsStart, y);
+
+                y += GROUP_GAP;
+                int toolsStart = y;
+                actionAdder.add(x, y, width, translator.t("button.open_cache_directory"), openCacheDirectoryAction);
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.backup_tools"), x, width, toolsStart, y);
+                return y;
             }
             case PROVIDERS -> {
                 return providerSectionAdder.add(config.providerManager, x, y, width, viewportHeight);
@@ -323,6 +445,36 @@ public final class ConfigSectionContentSupport {
         return language.trim();
     }
 
+    private static Integer tryParseNonNegativeInt(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isAllowedNumericInput(String value, int maxValue) {
+        if (value == null || value.isEmpty()) {
+            return true;
+        }
+
+        for (int index = 0; index < value.length(); index++) {
+            if (!Character.isDigit(value.charAt(index))) {
+                return false;
+            }
+        }
+
+        try {
+            return Integer.parseInt(value) <= maxValue;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
     @FunctionalInterface
     public interface Translator {
         Text t(String key, Object... args);
@@ -359,6 +511,7 @@ public final class ConfigSectionContentSupport {
                 String initialValue,
                 Text placeholder,
                 Consumer<String> changed,
+                Predicate<String> textPredicate,
                 boolean editable
         );
     }

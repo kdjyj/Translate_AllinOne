@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.gui.configui.controls.ActionBlock;
 import com.cedarxuesong.translate_allinone.gui.configui.controls.CheckboxBlock;
 import com.cedarxuesong.translate_allinone.gui.configui.controls.GroupBox;
 import com.cedarxuesong.translate_allinone.gui.configui.controls.IntSliderBlock;
+import com.cedarxuesong.translate_allinone.gui.configui.controls.StaticTextRow;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
@@ -77,5 +78,41 @@ public final class ConfigUiControlRenderer {
         for (CheckboxBlock block : blocks) {
             block.render(context, textRenderer, mouseX, mouseY);
         }
+    }
+
+    public static void drawStaticTextRows(DrawContext context, TextRenderer textRenderer, List<StaticTextRow> rows) {
+        for (StaticTextRow row : rows) {
+            int labelX = row.x() + 6;
+            int valueX = row.x() + row.labelWidth() + 6;
+            int textY = row.y() + 6;
+
+            int labelMaxWidth = Math.max(0, row.labelWidth() - 12);
+            int valueMaxWidth = Math.max(0, row.width() - row.labelWidth() - 12);
+
+            Text label = trimText(textRenderer, row.label(), labelMaxWidth);
+            Text value = trimText(textRenderer, row.value(), valueMaxWidth);
+
+            context.drawText(textRenderer, label, labelX, textY, row.labelColor(), false);
+            context.drawText(textRenderer, value, valueX, textY, row.valueColor(), false);
+        }
+    }
+
+    private static Text trimText(TextRenderer textRenderer, Text text, int maxWidth) {
+        if (text == null || maxWidth <= 0) {
+            return Text.empty();
+        }
+
+        String content = text.getString();
+        if (textRenderer.getWidth(content) <= maxWidth) {
+            return text;
+        }
+
+        int ellipsisWidth = textRenderer.getWidth("...");
+        if (ellipsisWidth >= maxWidth) {
+            return Text.literal(textRenderer.trimToWidth(content, maxWidth));
+        }
+
+        String trimmed = textRenderer.trimToWidth(content, maxWidth - ellipsisWidth);
+        return Text.literal(trimmed + "...");
     }
 }
