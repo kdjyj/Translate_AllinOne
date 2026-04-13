@@ -3,6 +3,7 @@ package com.cedarxuesong.translate_allinone.gui.configui.sections;
 import com.cedarxuesong.translate_allinone.gui.configui.model.ConfigSection;
 import net.minecraft.text.Text;
 
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -60,6 +61,7 @@ public final class ConfigChromeActionsSupport {
 
     public static void renderSectionActions(
             ConfigSection selectedSection,
+            List<ConfigSection> visibleSections,
             int topBarHeight,
             int leftPanelWidth,
             ActionBlockAdder actionBlockAdder,
@@ -69,7 +71,7 @@ public final class ConfigChromeActionsSupport {
     ) {
         int x = 14;
         int y = topBarHeight + 12;
-        for (ConfigSection section : ConfigSection.values()) {
+        for (ConfigSection section : visibleSections) {
             ConfigSection current = section;
             actionBlockAdder.add(
                     x,

@@ -6,7 +6,8 @@ public enum ConfigSection {
     CHAT_INPUT("chat_input"),
     ITEM("item"),
     SCOREBOARD("scoreboard"),
-    CACHE("cache");
+    CACHE("cache"),
+    DEBUG("debug");
 
     private final String key;
 

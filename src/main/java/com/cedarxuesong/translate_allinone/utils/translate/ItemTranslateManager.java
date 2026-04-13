@@ -210,10 +210,12 @@ public class ItemTranslateManager {
                 providerProfile.activeInjectSystemPromptIntoUserMessage()
         );
         String requestContext = buildRequestContext(providerProfile, config.target_language, originalTexts, messages);
+        long requestStartedAtNanos = System.nanoTime();
 
         llm.getCompletion(messages).whenComplete((response, error) -> {
             if (!isSessionActive(batchSessionEpoch)) {
                 cache.releaseInProgress(new java.util.HashSet<>(originalTexts));
+                logDevBatchTiming(config, "stale", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, 0, null);
                 Translate_AllinOne.LOGGER.debug(
                         "Dropping stale item translation callback. requestEpoch={}, activeEpoch={}, context={}",
                         batchSessionEpoch,
@@ -225,6 +227,7 @@ public class ItemTranslateManager {
 
             if (error != null) {
                 if (isInternalPostprocessError(error) && originalTexts.size() > 1) {
+                    logDevBatchTiming(config, "retry-single", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, 0, error);
                     Translate_AllinOne.LOGGER.warn(
                             "Item batch translation hit internal post-process error, retrying as single-item batches. context={} batchSize={}",
                             requestContext,
@@ -236,6 +239,7 @@ public class ItemTranslateManager {
                     return;
                 }
 
+                logDevBatchTiming(config, "error", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, 0, error);
                 Translate_AllinOne.LOGGER.error("Failed to get translation from LLM. context={}", requestContext, error);
                 cache.requeueFailed(new java.util.HashSet<>(originalTexts), error.getMessage());
                 return;
@@ -254,6 +258,7 @@ public class ItemTranslateManager {
                     if (hasKeyMismatch(translatedMapFromAI, originalTexts.size())) {
                         if (keyMismatchRetryCount < MAX_KEY_MISMATCH_BATCH_RETRIES) {
                             int nextAttempt = keyMismatchRetryCount + 1;
+                            logDevBatchTiming(config, "retry-batch", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, originalTexts.size(), null);
                             Translate_AllinOne.LOGGER.warn(
                                     "Item translation keys mismatched, retrying full batch. attempt={}/{} context={}",
                                     nextAttempt,
@@ -323,13 +328,27 @@ public class ItemTranslateManager {
                         Translate_AllinOne.LOGGER.warn("LLM response did not contain all original keys. Re-queueing {} missing translations.", allOriginalTexts.size());
                         cache.requeueFailed(allOriginalTexts, "LLM response missing keys");
                     }
+
+                    logDevBatchTiming(
+                            config,
+                            "success",
+                            requestContext,
+                            requestStartedAtNanos,
+                            originalTexts.size(),
+                            finalTranslatedMap.size(),
+                            itemsToRequeueForColor.size() + itemsToRequeueForEmpty.size(),
+                            allOriginalTexts.size(),
+                            null
+                    );
                 } else {
                     throw new JsonSyntaxException("No JSON object found in the response.");
                 }
             } catch (JsonSyntaxException e) {
+                logDevBatchTiming(config, "json-error", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, originalTexts.size(), e);
                 Translate_AllinOne.LOGGER.error("Failed to parse JSON response from LLM. Response: {}", response, e);
                 cache.requeueFailed(new java.util.HashSet<>(originalTexts), "Invalid JSON response");
             } catch (Throwable t) {
+                logDevBatchTiming(config, "postprocess-error", requestContext, requestStartedAtNanos, originalTexts.size(), 0, 0, originalTexts.size(), t);
                 Translate_AllinOne.LOGGER.error("Unexpected item translation post-processing error. context={}", requestContext, t);
                 cache.requeueFailed(new java.util.HashSet<>(originalTexts), "Translation post-processing failure");
             }
@@ -384,6 +403,36 @@ public class ItemTranslateManager {
             return sample.toString();
         }
         return sample + "...(+" + (keys.size() - limit) + ")";
+    }
+
+    private void logDevBatchTiming(
+            ItemTranslateConfig config,
+            String phase,
+            String requestContext,
+            long requestStartedAtNanos,
+            int batchSize,
+            int translatedCount,
+            int requeueCount,
+            int missingCount,
+            Throwable error
+    ) {
+        if (!TooltipTextMatcherSupport.shouldLogItemBatchTiming(config)) {
+            return;
+        }
+
+        double elapsedMillis = (System.nanoTime() - requestStartedAtNanos) / 1_000_000.0;
+        String errorSummary = error == null ? "" : truncate(normalizeWhitespace(String.valueOf(unwrapThrowable(error))), 220);
+        Translate_AllinOne.LOGGER.info(
+                "[ItemDev] phase={} elapsedMs={} batchSize={} translated={} requeue={} missing={} context={} error=\"{}\"",
+                phase,
+                String.format(Locale.ROOT, "%.2f", elapsedMillis),
+                batchSize,
+                translatedCount,
+                requeueCount,
+                missingCount,
+                requestContext,
+                errorSummary
+        );
     }
 
     private String buildSystemPrompt(String targetLanguage, String suffix) {

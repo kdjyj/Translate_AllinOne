@@ -11,6 +11,9 @@ import com.cedarxuesong.translate_allinone.utils.config.pojos.ScoreboardConfig;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
@@ -77,10 +80,14 @@ public class ConfigManager {
         }
 
         try (Reader reader = Files.newBufferedReader(CONFIG_PATH)) {
-            ModConfig loadedConfig = normalizeConfig(GSON.fromJson(reader, ModConfig.class));
+            JsonElement rawConfig = JsonParser.parseReader(reader);
+            ModConfig loadedConfig = normalizeConfig(GSON.fromJson(rawConfig, ModConfig.class));
+            boolean migratedLegacyItemDebugConfig = migrateLegacyItemDebugConfig(rawConfig, loadedConfig);
             if (loadedConfig == null) {
                 Translate_AllinOne.LOGGER.warn("Config file is empty or invalid, using defaults: {}", CONFIG_PATH);
                 loadedConfig = normalizeConfig(new ModConfig());
+                writeConfig(loadedConfig);
+            } else if (migratedLegacyItemDebugConfig) {
                 writeConfig(loadedConfig);
             }
             return loadedConfig;
@@ -154,6 +161,9 @@ public class ConfigManager {
         if (configToUse.itemTranslate.keybinding.refreshBinding == null) {
             configToUse.itemTranslate.keybinding.refreshBinding = new InputBindingConfig();
         }
+        if (configToUse.itemTranslate.debug == null) {
+            configToUse.itemTranslate.debug = new ItemTranslateConfig.DebugConfig();
+        }
 
         if (configToUse.scoreboardTranslate.keybinding == null) {
             configToUse.scoreboardTranslate.keybinding = new ScoreboardConfig.KeybindingConfig();
@@ -211,5 +221,79 @@ public class ConfigManager {
         } catch (IOException e) {
             throw new RuntimeException("Failed to replace config file: " + CONFIG_PATH, e);
         }
+    }
+
+    private static boolean migrateLegacyItemDebugConfig(JsonElement rawConfig, ModConfig loadedConfig) {
+        if (loadedConfig == null || loadedConfig.itemTranslate == null || loadedConfig.itemTranslate.debug == null) {
+            return false;
+        }
+
+        boolean migratedLegacyItemDevMode = false;
+        if (!hasExplicitItemDebugEnabled(rawConfig) && isLegacyItemDevModeEnabled(rawConfig)) {
+            loadedConfig.itemTranslate.debug.enabled = true;
+            migratedLegacyItemDevMode = true;
+        }
+
+        return migratedLegacyItemDevMode || shouldRewriteLegacyItemDebugObject(rawConfig);
+    }
+
+    private static boolean hasExplicitItemDebugEnabled(JsonElement rawConfig) {
+        JsonObject debugObject = getItemDebugObject(rawConfig);
+        if (debugObject != null && debugObject.has("enabled")) {
+            return true;
+        }
+
+        JsonObject legacyDevObject = getLegacyItemDevObject(rawConfig);
+        return legacyDevObject != null && legacyDevObject.has("enabled");
+    }
+
+    private static boolean shouldRewriteLegacyItemDebugObject(JsonElement rawConfig) {
+        return getLegacyItemDevObject(rawConfig) != null && getItemDebugObject(rawConfig) == null;
+    }
+
+    private static boolean isLegacyItemDevModeEnabled(JsonElement rawConfig) {
+        JsonObject itemTranslateObject = getItemTranslateObject(rawConfig);
+        if (itemTranslateObject == null || !itemTranslateObject.has("dev_mode")) {
+            return false;
+        }
+        JsonElement legacyDevMode = itemTranslateObject.get("dev_mode");
+        return legacyDevMode != null && legacyDevMode.isJsonPrimitive() && legacyDevMode.getAsBoolean();
+    }
+
+    private static JsonObject getItemTranslateObject(JsonElement rawConfig) {
+        if (rawConfig == null || !rawConfig.isJsonObject()) {
+            return null;
+        }
+        JsonElement itemTranslateElement = rawConfig.getAsJsonObject().get("itemTranslate");
+        if (itemTranslateElement == null || !itemTranslateElement.isJsonObject()) {
+            return null;
+        }
+        return itemTranslateElement.getAsJsonObject();
+    }
+
+    private static JsonObject getItemDebugObject(JsonElement rawConfig) {
+        JsonObject itemTranslateObject = getItemTranslateObject(rawConfig);
+        if (itemTranslateObject == null) {
+            return null;
+        }
+
+        JsonElement debugElement = itemTranslateObject.get("debug");
+        if (debugElement == null || !debugElement.isJsonObject()) {
+            return null;
+        }
+        return debugElement.getAsJsonObject();
+    }
+
+    private static JsonObject getLegacyItemDevObject(JsonElement rawConfig) {
+        JsonObject itemTranslateObject = getItemTranslateObject(rawConfig);
+        if (itemTranslateObject == null) {
+            return null;
+        }
+
+        JsonElement devElement = itemTranslateObject.get("dev");
+        if (devElement == null || !devElement.isJsonObject()) {
+            return null;
+        }
+        return devElement.getAsJsonObject();
     }
 }

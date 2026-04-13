@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.Translate_AllinOne;
 import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.input.KeybindingManager;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipTextMatcherSupport;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipTranslationContext;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipTranslationSupport;
 import net.minecraft.text.Text;
@@ -65,7 +66,15 @@ public abstract class WynnmodStatsTooltipContextMixin {
             return;
         }
 
-        List<Text> translatedTooltip = translate_allinone$translateDecoratedTooltip(sanitizedTooltip, config, showRefreshNotice);
+        boolean emitDevLog = TooltipTextMatcherSupport.beginTooltipDevPass(config, "wynnmod", sanitizedTooltip);
+        long tooltipStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
+        List<Text> translatedTooltip = translate_allinone$translateDecoratedTooltip(
+                sanitizedTooltip,
+                config,
+                showRefreshNotice,
+                emitDevLog,
+                tooltipStartedAtNanos
+        );
         if (translate_allinone$setTooltipText(event, translatedTooltip)) {
             TooltipTranslationContext.setSkipDrawContextTranslation(true);
         }
@@ -91,33 +100,51 @@ public abstract class WynnmodStatsTooltipContextMixin {
     }
 
     @Unique
-    private static List<Text> translate_allinone$translateDecoratedTooltip(List<Text> currentTooltip, ItemTranslateConfig config, boolean showRefreshNotice) {
+    private static List<Text> translate_allinone$translateDecoratedTooltip(
+            List<Text> currentTooltip,
+            ItemTranslateConfig config,
+            boolean showRefreshNotice,
+            boolean emitDevLog,
+            long tooltipStartedAtNanos
+    ) {
         List<Text> translatedTooltip = new ArrayList<>(currentTooltip.size() + 1);
         boolean isFirstLine = true;
+        int translatableLines = 0;
         boolean isCurrentItemStackPending = false;
         boolean hasMissingKeyIssue = false;
 
-        for (Text line : currentTooltip) {
+        for (int lineIndex = 0; lineIndex < currentTooltip.size(); lineIndex++) {
+            Text line = currentTooltip.get(lineIndex);
             if (TooltipTranslationSupport.isInternalGeneratedLine(line)) {
                 continue;
             }
 
-            boolean shouldTranslate = false;
-            if (line != null && !line.getString().trim().isEmpty()) {
-                if (isFirstLine) {
-                    shouldTranslate = config.enabled_translate_item_custom_name;
-                    isFirstLine = false;
-                } else {
-                    shouldTranslate = config.enabled_translate_item_lore;
-                }
-            }
-
-            if (!shouldTranslate) {
+            if (line == null || line.getString().trim().isEmpty()) {
                 translatedTooltip.add(line);
                 continue;
             }
 
+            boolean firstContentLine = isFirstLine;
+            isFirstLine = false;
+            TooltipTextMatcherSupport.TooltipLineDecision decision =
+                    TooltipTextMatcherSupport.evaluateTooltipLine(line, firstContentLine, config);
+            TooltipTextMatcherSupport.logLineDecisionIfDev(config, emitDevLog, "wynnmod", lineIndex, decision, line);
+            if (!decision.shouldTranslate()) {
+                translatedTooltip.add(line);
+                continue;
+            }
+
+            translatableLines++;
+            long lineStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
             TooltipTranslationSupport.TooltipLineResult lineResult = TooltipTranslationSupport.translateLine(line, true);
+            TooltipTextMatcherSupport.logLineTranslationIfDev(
+                    config,
+                    emitDevLog,
+                    "wynnmod",
+                    lineIndex,
+                    lineResult,
+                    lineStartedAtNanos
+            );
             translatedTooltip.add(lineResult.translatedLine());
             if (lineResult.pending()) {
                 isCurrentItemStackPending = true;
@@ -142,6 +169,14 @@ public abstract class WynnmodStatsTooltipContextMixin {
             translatedTooltip.add(TooltipTranslationSupport.createRefreshNoticeLine());
         }
 
+        TooltipTextMatcherSupport.logTooltipPassIfDev(
+                config,
+                emitDevLog,
+                "wynnmod",
+                currentTooltip.size(),
+                translatableLines,
+                tooltipStartedAtNanos
+        );
         return translatedTooltip;
     }
 

@@ -162,6 +162,9 @@ public final class ConfigSectionContentSupport {
                 if (item.keybinding.refreshBinding == null) {
                     item.keybinding.refreshBinding = new InputBindingConfig();
                 }
+                if (item.debug == null) {
+                    item.debug = new ItemTranslateConfig.DebugConfig();
+                }
 
                 int basicStart = y;
                 toggleAdder.add(x, y, width, translator.t("label.enabled"), () -> item.enabled, value -> item.enabled = value);
@@ -239,6 +242,54 @@ public final class ConfigSectionContentSupport {
                 routeSelectorAdder.add(config.providerManager, RouteSlot.ITEM, x, y, width);
                 addGroupBox(groupBoxAdder, translator.t("group.route"), x, width, routeStart, routeStart + ROW_STEP);
                 return routeStart + ROW_STEP;
+            }
+            case DEBUG -> {
+                ItemTranslateConfig item = config.itemTranslate;
+                if (item.debug == null) {
+                    item.debug = new ItemTranslateConfig.DebugConfig();
+                }
+
+                int debugStart = y;
+                toggleAdder.add(x, y, width, translator.t("label.item_dev_enabled"), () -> item.debug.enabled, value -> item.debug.enabled = value);
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.item_dev_log_tooltip_filter"),
+                        () -> item.debug.log_tooltip_filter_result,
+                        value -> item.debug.log_tooltip_filter_result = value
+                );
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.item_dev_log_tooltip_nodes"),
+                        () -> item.debug.log_tooltip_node_summary,
+                        value -> item.debug.log_tooltip_node_summary = value
+                );
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.item_dev_log_tooltip_timing"),
+                        () -> item.debug.log_tooltip_timing,
+                        value -> item.debug.log_tooltip_timing = value
+                );
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.item_dev_log_batch_timing"),
+                        () -> item.debug.log_item_batch_timing,
+                        value -> item.debug.log_item_batch_timing = value
+                );
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.basic"), x, width, debugStart, y);
+                return y;
             }
             case SCOREBOARD -> {
                 ScoreboardConfig scoreboard = config.scoreboardTranslate;

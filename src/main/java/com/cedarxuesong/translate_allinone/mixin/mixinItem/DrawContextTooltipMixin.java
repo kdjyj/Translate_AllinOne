@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.Translate_AllinOne;
 import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.input.KeybindingManager;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipTextMatcherSupport;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipTranslationContext;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipTranslationSupport;
 import net.minecraft.client.font.TextRenderer;
@@ -108,9 +109,19 @@ public abstract class DrawContextTooltipMixin {
             return;
         }
 
+        boolean emitDevLog = TooltipTextMatcherSupport.beginTooltipDevPass(config, "draw-context", tooltipLines);
+        long tooltipStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
+
         try {
             translate_allinone$isProcessing.set(true);
-            translate_allinone$translateComponentsInPlace(parsedTooltip.orderedLines(), components, config, showRefreshNotice);
+            translate_allinone$translateComponentsInPlace(
+                    parsedTooltip.orderedLines(),
+                    components,
+                    config,
+                    showRefreshNotice,
+                    emitDevLog,
+                    tooltipStartedAtNanos
+            );
         } catch (Exception e) {
             LOGGER.error("Failed to translate DrawContext tooltip components", e);
         } finally {
@@ -140,40 +151,46 @@ public abstract class DrawContextTooltipMixin {
             List<OrderedTooltipLine> orderedLines,
             List<TooltipComponent> components,
             ItemTranslateConfig config,
-            boolean showRefreshNotice
+            boolean showRefreshNotice,
+            boolean emitDevLog,
+            long tooltipStartedAtNanos
     ) {
         boolean isFirstLine = true;
         int translatableLines = 0;
         boolean isCurrentItemStackPending = false;
         boolean hasMissingKeyIssue = false;
 
-        for (OrderedTooltipLine orderedLine : orderedLines) {
+        for (int lineIndex = 0; lineIndex < orderedLines.size(); lineIndex++) {
+            OrderedTooltipLine orderedLine = orderedLines.get(lineIndex);
             OrderedTextTooltipComponentAccessor accessor = orderedLine.accessor();
             Text line = orderedLine.text();
             if (line.getString().trim().isEmpty()) {
                 continue;
             }
 
-            boolean shouldTranslate = false;
-            if (isFirstLine) {
-                if (config.enabled_translate_item_custom_name) {
-                    shouldTranslate = true;
-                }
-                isFirstLine = false;
-            } else {
-                if (config.enabled_translate_item_lore) {
-                    shouldTranslate = true;
-                }
-            }
+            boolean firstContentLine = isFirstLine;
+            isFirstLine = false;
+            TooltipTextMatcherSupport.TooltipLineDecision decision =
+                    TooltipTextMatcherSupport.evaluateTooltipLine(line, firstContentLine, config);
+            TooltipTextMatcherSupport.logLineDecisionIfDev(config, emitDevLog, "draw-context", lineIndex, decision, line);
 
-            if (!shouldTranslate) {
+            if (!decision.shouldTranslate()) {
                 continue;
             }
 
             translatableLines++;
+            long lineStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
             TooltipTranslationSupport.TooltipLineResult lineResult = TooltipTranslationSupport.translateLine(
                     line,
                     config.wynn_item_compatibility
+            );
+            TooltipTextMatcherSupport.logLineTranslationIfDev(
+                    config,
+                    emitDevLog,
+                    "draw-context",
+                    lineIndex,
+                    lineResult,
+                    lineStartedAtNanos
             );
             if (lineResult.pending()) {
                 isCurrentItemStackPending = true;
@@ -202,6 +219,15 @@ public abstract class DrawContextTooltipMixin {
         if (showRefreshNotice) {
             components.add(TooltipComponent.of(TooltipTranslationSupport.createRefreshNoticeLine().asOrderedText()));
         }
+
+        TooltipTextMatcherSupport.logTooltipPassIfDev(
+                config,
+                emitDevLog,
+                "draw-context",
+                orderedLines.size(),
+                translatableLines,
+                tooltipStartedAtNanos
+        );
     }
 
     @Unique

@@ -76,6 +76,7 @@ import java.util.function.Supplier;
 public class ModConfigScreen extends Screen {
     private static final String I18N_PREFIX = "text.translate_allinone.configscreen.";
     private static final Gson CONFIG_STATE_GSON = new Gson();
+    private static final String DEBUG_SECTION_ACCOUNT_UUID = "ef7acee7-f759-4d1e-a1ba-5a8dc7656d01";
 
     private static final int COLOR_BG = 0xFF0C0C0C;
     private static final int COLOR_TOP_BAR = 0xFF151515;
@@ -402,6 +403,7 @@ public class ModConfigScreen extends Screen {
     }
 
     private void rebuildActionBlocks(FocusTarget focusTarget) {
+        ensureSelectedSectionVisible();
         clearChildren();
         actionBlocks.clear();
         contentActionBlocks.clear();
@@ -439,6 +441,7 @@ public class ModConfigScreen extends Screen {
 
         ConfigChromeActionsSupport.renderSectionActions(
                 selectedSection,
+                visibleSections(),
                 TOP_BAR_HEIGHT,
                 LEFT_PANEL_WIDTH,
                 actionBlockRegistry::add,
@@ -477,6 +480,46 @@ public class ModConfigScreen extends Screen {
                 customParameterNameField
         );
         pendingFocusTarget = FocusTarget.NONE;
+    }
+
+    private void ensureSelectedSectionVisible() {
+        if (isSectionVisible(selectedSection)) {
+            return;
+        }
+
+        selectedSection = firstVisibleSection();
+        hotkeyCaptureTarget = null;
+        addProviderTypeDropdownOpen = false;
+        routeDropdownSlot = null;
+    }
+
+    private List<ConfigSection> visibleSections() {
+        List<ConfigSection> sections = new ArrayList<>();
+        for (ConfigSection section : ConfigSection.values()) {
+            if (isSectionVisible(section)) {
+                sections.add(section);
+            }
+        }
+        return sections;
+    }
+
+    private ConfigSection firstVisibleSection() {
+        for (ConfigSection section : ConfigSection.values()) {
+            if (isSectionVisible(section)) {
+                return section;
+            }
+        }
+        return ConfigSection.CHAT_OUTPUT;
+    }
+
+    private boolean isSectionVisible(ConfigSection section) {
+        return section != ConfigSection.DEBUG || shouldShowDebugSection();
+    }
+
+    private boolean shouldShowDebugSection() {
+        return this.client != null
+                && this.client.player != null
+                && DEBUG_SECTION_ACCOUNT_UUID.equalsIgnoreCase(this.client.player.getUuid().toString());
     }
 
     private void addSectionSpecificActions() {
