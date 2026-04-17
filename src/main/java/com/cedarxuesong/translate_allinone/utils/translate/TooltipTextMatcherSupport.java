@@ -353,6 +353,8 @@ public final class TooltipTextMatcherSupport {
             String source,
             int lineIndex,
             TooltipTranslationSupport.TooltipLineResult lineResult,
+            String route,
+            String detail,
             long startedAtNanos
     ) {
         if (!emitDevLog || !shouldLogTooltipTiming(config) || lineResult == null) {
@@ -360,12 +362,14 @@ public final class TooltipTextMatcherSupport {
         }
 
         LOGGER.info(
-                "[TooltipDev:{}] line={} translateLine={}ms pending={} missingKeyIssue={} result=\"{}\"",
+                "[TooltipDev:{}] line={} route={} translateLine={}ms pending={} missingKeyIssue={} detail=\"{}\" result=\"{}\"",
                 source,
                 lineIndex + 1,
+                emptyIfBlank(route),
                 formatDurationMillis(startedAtNanos),
                 lineResult.pending(),
                 lineResult.missingKeyIssue(),
+                truncate(detail, 220),
                 truncate(lineResult.translatedLine() == null ? "" : lineResult.translatedLine().getString(), 180)
         );
     }

@@ -375,6 +375,10 @@ public final class TooltipTranslationSupport {
                             devSource,
                             blockCandidate.lineIndex(),
                             lineResult,
+                            "paragraph-block",
+                            "paragraphKey=" + (paragraphBlock.paragraphTemplate().translationTemplateKey() == null
+                                    ? ""
+                                    : paragraphBlock.paragraphTemplate().translationTemplateKey()),
                             blockStartedAtNanos
                     );
                 }
@@ -390,7 +394,14 @@ public final class TooltipTranslationSupport {
 
             translatableLines++;
             long lineStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
-            TooltipLineResult lineResult = translateLine(candidate.line(), useTagStylePreservation);
+            TooltipStructuredCaptureSupport.StructuredTooltipLineResult structuredLineResult =
+                    TooltipStructuredCaptureSupport.tryTranslateStructuredLine(candidate.line(), useTagStylePreservation);
+            String lineTemplateKey = structuredLineResult == null
+                    ? extractTemplateKey(candidate.line(), useTagStylePreservation)
+                    : null;
+            TooltipLineResult lineResult = structuredLineResult != null
+                    ? structuredLineResult.lineResult()
+                    : translateLine(candidate.line(), useTagStylePreservation);
             if (lineResult.pending()) {
                 hasPending = true;
             }
@@ -404,6 +415,10 @@ public final class TooltipTranslationSupport {
                     devSource,
                     candidate.lineIndex(),
                     lineResult,
+                    structuredLineResult != null ? "capture" : "line-template",
+                    structuredLineResult != null
+                            ? structuredLineResult.debugSummary()
+                            : "templateKey=" + (lineTemplateKey == null ? "" : lineTemplateKey),
                     lineStartedAtNanos
             );
             index++;
@@ -569,6 +584,14 @@ public final class TooltipTranslationSupport {
             if (paragraphBlock != null) {
                 keys.add(paragraphBlock.paragraphTemplate().translationTemplateKey());
                 index = paragraphBlock.endExclusive();
+                continue;
+            }
+
+            Set<String> structuredKeys =
+                    TooltipStructuredCaptureSupport.collectStructuredTemplateKeys(candidate.line(), config.wynn_item_compatibility);
+            if (!structuredKeys.isEmpty()) {
+                keys.addAll(structuredKeys);
+                index++;
                 continue;
             }
 
@@ -2236,6 +2259,10 @@ public final class TooltipTranslationSupport {
         if (forceRefreshCompatBypassUntilByKey.size() > FORCE_REFRESH_COMPAT_BYPASS_STATE_LIMIT) {
             forceRefreshCompatBypassUntilByKey.clear();
         }
+    }
+
+    static String extractTemplateKeyForLine(Text line, boolean useTagStylePreservation) {
+        return extractTemplateKey(line, useTagStylePreservation);
     }
 
     private static String extractTemplateKey(Text line, boolean useTagStylePreservation) {

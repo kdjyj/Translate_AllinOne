@@ -3,7 +3,9 @@ package com.cedarxuesong.translate_allinone.utils.textmatcher;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -11,7 +13,7 @@ import java.util.function.Predicate;
 public final class TextPattern {
     private final List<PatternStep> steps;
     
-    private record MatchState(int endIndex, List<String> matchedBranches) {
+    private record MatchState(int endIndex, List<String> matchedBranches, Map<String, List<FlatNode>> captures) {
     }
 
     private TextPattern(List<PatternStep> steps) {
@@ -27,12 +29,7 @@ public final class TextPattern {
     }
 
     public TextMatchResult match(Text text, boolean compact) {
-        List<FlatNode> nodes = normalize(text, compact);
-        MatchState matchState = tryMatch(nodes, steps, 0, 0, List.of());
-        if (matchState == null || matchState.endIndex() != nodes.size()) {
-            return TextMatchResult.FAILURE;
-        }
-        return new TextMatchResult(true, List.copyOf(nodes), matchState.matchedBranches(), 0, nodes.size());
+        return match(normalize(text, compact));
     }
 
     public TextMatchResult find(Text text) {
@@ -40,14 +37,33 @@ public final class TextPattern {
     }
 
     public TextMatchResult find(Text text, boolean compact) {
-        List<FlatNode> nodes = normalize(text, compact);
+        return find(normalize(text, compact));
+    }
+
+    public TextMatchResult match(List<FlatNode> nodes) {
+        MatchState matchState = tryMatch(nodes, steps, 0, 0, List.of(), Map.of());
+        if (matchState == null || matchState.endIndex() != nodes.size()) {
+            return TextMatchResult.FAILURE;
+        }
+        return new TextMatchResult(
+                true,
+                List.copyOf(nodes),
+                matchState.matchedBranches(),
+                matchState.captures(),
+                0,
+                nodes.size()
+        );
+    }
+
+    public TextMatchResult find(List<FlatNode> nodes) {
         for (int start = 0; start <= nodes.size(); start++) {
-            MatchState matchState = tryMatch(nodes, steps, 0, start, List.of());
+            MatchState matchState = tryMatch(nodes, steps, 0, start, List.of(), Map.of());
             if (matchState != null) {
                 return new TextMatchResult(
                         true,
                         List.copyOf(nodes.subList(start, matchState.endIndex())),
                         matchState.matchedBranches(),
+                        matchState.captures(),
                         start,
                         matchState.endIndex()
                 );
@@ -66,18 +82,19 @@ public final class TextPattern {
             List<PatternStep> activeSteps,
             int stepIndex,
             int nodeIndex,
-            List<String> matchedBranches
+            List<String> matchedBranches,
+            Map<String, List<FlatNode>> captures
     ) {
         if (stepIndex >= activeSteps.size()) {
-            return new MatchState(nodeIndex, matchedBranches);
+            return new MatchState(nodeIndex, matchedBranches, Map.copyOf(captures));
         }
 
         PatternStep step = activeSteps.get(stepIndex);
         if (step instanceof QuantifiedStep quantifiedStep) {
-            return tryMatchQuantified(nodes, activeSteps, stepIndex, nodeIndex, matchedBranches, quantifiedStep);
+            return tryMatchQuantified(nodes, activeSteps, stepIndex, nodeIndex, matchedBranches, captures, quantifiedStep);
         }
         if (step instanceof EitherStep eitherStep) {
-            return tryMatchEither(nodes, activeSteps, stepIndex, nodeIndex, matchedBranches, eitherStep);
+            return tryMatchEither(nodes, activeSteps, stepIndex, nodeIndex, matchedBranches, captures, eitherStep);
         }
         return null;
     }
@@ -88,6 +105,7 @@ public final class TextPattern {
             int stepIndex,
             int nodeIndex,
             List<String> matchedBranches,
+            Map<String, List<FlatNode>> captures,
             QuantifiedStep step
     ) {
         int maxPossible = 0;
@@ -102,14 +120,28 @@ public final class TextPattern {
 
         if (step.greedy()) {
             for (int count = maxPossible; count >= step.minCount(); count--) {
-                MatchState result = tryMatch(nodes, activeSteps, stepIndex + 1, nodeIndex + count, matchedBranches);
+                MatchState result = tryMatch(
+                        nodes,
+                        activeSteps,
+                        stepIndex + 1,
+                        nodeIndex + count,
+                        matchedBranches,
+                        capturesWithCapture(captures, step.captureName(), nodes, nodeIndex, count)
+                );
                 if (result != null) {
                     return result;
                 }
             }
         } else {
             for (int count = step.minCount(); count <= maxPossible; count++) {
-                MatchState result = tryMatch(nodes, activeSteps, stepIndex + 1, nodeIndex + count, matchedBranches);
+                MatchState result = tryMatch(
+                        nodes,
+                        activeSteps,
+                        stepIndex + 1,
+                        nodeIndex + count,
+                        matchedBranches,
+                        capturesWithCapture(captures, step.captureName(), nodes, nodeIndex, count)
+                );
                 if (result != null) {
                     return result;
                 }
@@ -124,6 +156,7 @@ public final class TextPattern {
             int stepIndex,
             int nodeIndex,
             List<String> matchedBranches,
+            Map<String, List<FlatNode>> captures,
             EitherStep step
     ) {
         List<PatternStep> remainingSteps = activeSteps.subList(stepIndex + 1, activeSteps.size());
@@ -138,7 +171,7 @@ public final class TextPattern {
                 nextMatchedBranches.add(branch.label());
                 nextMatchedBranches = List.copyOf(nextMatchedBranches);
             }
-            MatchState result = tryMatch(nodes, combinedSteps, 0, nodeIndex, nextMatchedBranches);
+            MatchState result = tryMatch(nodes, combinedSteps, 0, nodeIndex, nextMatchedBranches, captures);
             if (result != null) {
                 return result;
             }
@@ -149,7 +182,13 @@ public final class TextPattern {
     private sealed interface PatternStep permits QuantifiedStep, EitherStep {
     }
 
-    private record QuantifiedStep(Predicate<FlatNode> predicate, int minCount, int maxCount, boolean greedy)
+    private record QuantifiedStep(
+            Predicate<FlatNode> predicate,
+            int minCount,
+            int maxCount,
+            boolean greedy,
+            String captureName
+    )
             implements PatternStep {
     }
 
@@ -163,47 +202,108 @@ public final class TextPattern {
         private final List<PatternStep> steps = new ArrayList<>();
 
         public Builder one(ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate) {
-            return quantified(contentMatcher, nodePredicate, 1, 1, true);
+            return quantified(contentMatcher, nodePredicate, 1, 1, true, null);
+        }
+
+        public Builder one(ContentMatcher contentMatcher, String capture, Predicate<FlatNode> nodePredicate) {
+            return quantified(contentMatcher, nodePredicate, 1, 1, true, capture);
         }
 
         public Builder one(ContentMatcher contentMatcher, Consumer<NodePredicateBuilder> styleBlock) {
-            return quantified(contentMatcher, styleBlock, 1, 1, true);
+            return quantified(contentMatcher, styleBlock, 1, 1, true, null);
+        }
+
+        public Builder one(ContentMatcher contentMatcher, String capture, Consumer<NodePredicateBuilder> styleBlock) {
+            return quantified(contentMatcher, styleBlock, 1, 1, true, capture);
         }
 
         public Builder optional(ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate, boolean greedy) {
-            return quantified(contentMatcher, nodePredicate, 0, 1, greedy);
+            return quantified(contentMatcher, nodePredicate, 0, 1, greedy, null);
+        }
+
+        public Builder optional(ContentMatcher contentMatcher, String capture, Predicate<FlatNode> nodePredicate, boolean greedy) {
+            return quantified(contentMatcher, nodePredicate, 0, 1, greedy, capture);
         }
 
         public Builder optional(ContentMatcher contentMatcher, Consumer<NodePredicateBuilder> styleBlock, boolean greedy) {
-            return quantified(contentMatcher, styleBlock, 0, 1, greedy);
+            return quantified(contentMatcher, styleBlock, 0, 1, greedy, null);
+        }
+
+        public Builder optional(
+                ContentMatcher contentMatcher,
+                String capture,
+                Consumer<NodePredicateBuilder> styleBlock,
+                boolean greedy
+        ) {
+            return quantified(contentMatcher, styleBlock, 0, 1, greedy, capture);
         }
 
         public Builder oneOrMore(ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate) {
-            return quantified(contentMatcher, nodePredicate, 1, Integer.MAX_VALUE, true);
+            return quantified(contentMatcher, nodePredicate, 1, Integer.MAX_VALUE, true, null);
+        }
+
+        public Builder oneOrMore(ContentMatcher contentMatcher, String capture, Predicate<FlatNode> nodePredicate) {
+            return quantified(contentMatcher, nodePredicate, 1, Integer.MAX_VALUE, true, capture);
         }
 
         public Builder oneOrMore(ContentMatcher contentMatcher, Consumer<NodePredicateBuilder> styleBlock) {
-            return quantified(contentMatcher, styleBlock, 1, Integer.MAX_VALUE, true);
+            return quantified(contentMatcher, styleBlock, 1, Integer.MAX_VALUE, true, null);
+        }
+
+        public Builder oneOrMore(ContentMatcher contentMatcher, String capture, Consumer<NodePredicateBuilder> styleBlock) {
+            return quantified(contentMatcher, styleBlock, 1, Integer.MAX_VALUE, true, capture);
         }
 
         public Builder zeroOrMore(ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate, boolean greedy) {
-            return quantified(contentMatcher, nodePredicate, 0, Integer.MAX_VALUE, greedy);
+            return quantified(contentMatcher, nodePredicate, 0, Integer.MAX_VALUE, greedy, null);
+        }
+
+        public Builder zeroOrMore(ContentMatcher contentMatcher, String capture, Predicate<FlatNode> nodePredicate, boolean greedy) {
+            return quantified(contentMatcher, nodePredicate, 0, Integer.MAX_VALUE, greedy, capture);
         }
 
         public Builder zeroOrMore(ContentMatcher contentMatcher, Consumer<NodePredicateBuilder> styleBlock, boolean greedy) {
-            return quantified(contentMatcher, styleBlock, 0, Integer.MAX_VALUE, greedy);
+            return quantified(contentMatcher, styleBlock, 0, Integer.MAX_VALUE, greedy, null);
+        }
+
+        public Builder zeroOrMore(
+                ContentMatcher contentMatcher,
+                String capture,
+                Consumer<NodePredicateBuilder> styleBlock,
+                boolean greedy
+        ) {
+            return quantified(contentMatcher, styleBlock, 0, Integer.MAX_VALUE, greedy, capture);
         }
 
         public Builder exactly(int count, ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate) {
-            return quantified(contentMatcher, nodePredicate, count, count, true);
+            return quantified(contentMatcher, nodePredicate, count, count, true, null);
+        }
+
+        public Builder exactly(int count, ContentMatcher contentMatcher, String capture, Predicate<FlatNode> nodePredicate) {
+            return quantified(contentMatcher, nodePredicate, count, count, true, capture);
         }
 
         public Builder exactly(int count, ContentMatcher contentMatcher, Consumer<NodePredicateBuilder> styleBlock) {
-            return quantified(contentMatcher, styleBlock, count, count, true);
+            return quantified(contentMatcher, styleBlock, count, count, true, null);
+        }
+
+        public Builder exactly(int count, ContentMatcher contentMatcher, String capture, Consumer<NodePredicateBuilder> styleBlock) {
+            return quantified(contentMatcher, styleBlock, count, count, true, capture);
         }
 
         public Builder between(int minCount, int maxCount, ContentMatcher contentMatcher, Predicate<FlatNode> nodePredicate, boolean greedy) {
-            return quantified(contentMatcher, nodePredicate, minCount, maxCount, greedy);
+            return quantified(contentMatcher, nodePredicate, minCount, maxCount, greedy, null);
+        }
+
+        public Builder between(
+                int minCount,
+                int maxCount,
+                ContentMatcher contentMatcher,
+                String capture,
+                Predicate<FlatNode> nodePredicate,
+                boolean greedy
+        ) {
+            return quantified(contentMatcher, nodePredicate, minCount, maxCount, greedy, capture);
         }
 
         public Builder between(
@@ -213,7 +313,18 @@ public final class TextPattern {
                 Consumer<NodePredicateBuilder> styleBlock,
                 boolean greedy
         ) {
-            return quantified(contentMatcher, styleBlock, minCount, maxCount, greedy);
+            return quantified(contentMatcher, styleBlock, minCount, maxCount, greedy, null);
+        }
+
+        public Builder between(
+                int minCount,
+                int maxCount,
+                ContentMatcher contentMatcher,
+                String capture,
+                Consumer<NodePredicateBuilder> styleBlock,
+                boolean greedy
+        ) {
+            return quantified(contentMatcher, styleBlock, minCount, maxCount, greedy, capture);
         }
 
         public Builder either(Consumer<EitherBuilder> eitherBlock) {
@@ -237,7 +348,8 @@ public final class TextPattern {
                 Predicate<FlatNode> nodePredicate,
                 int minCount,
                 int maxCount,
-                boolean greedy
+                boolean greedy,
+                String capture
         ) {
             Objects.requireNonNull(contentMatcher, "contentMatcher");
             if (minCount < 0) {
@@ -249,7 +361,7 @@ public final class TextPattern {
 
             Predicate<FlatNode> predicate = node -> contentMatcher.matches(node.content())
                     && (nodePredicate == null || nodePredicate.test(node));
-            steps.add(new QuantifiedStep(predicate, minCount, maxCount, greedy));
+            steps.add(new QuantifiedStep(predicate, minCount, maxCount, greedy, capture));
             return this;
         }
 
@@ -258,10 +370,11 @@ public final class TextPattern {
                 Consumer<NodePredicateBuilder> styleBlock,
                 int minCount,
                 int maxCount,
-                boolean greedy
+                boolean greedy,
+                String capture
         ) {
             Predicate<FlatNode> nodePredicate = styleBlock == null ? null : NodePredicateBuilder.buildPredicate(styleBlock);
-            return quantified(contentMatcher, nodePredicate, minCount, maxCount, greedy);
+            return quantified(contentMatcher, nodePredicate, minCount, maxCount, greedy, capture);
         }
 
         private List<PatternStep> snapshot() {
@@ -409,5 +522,21 @@ public final class TextPattern {
         private List<EitherBranch> build() {
             return List.copyOf(branches);
         }
+    }
+
+    private static Map<String, List<FlatNode>> capturesWithCapture(
+            Map<String, List<FlatNode>> captures,
+            String captureName,
+            List<FlatNode> nodes,
+            int nodeIndex,
+            int count
+    ) {
+        if (captureName == null || captureName.isBlank()) {
+            return captures;
+        }
+
+        Map<String, List<FlatNode>> next = new HashMap<>(captures);
+        next.put(captureName, List.copyOf(nodes.subList(nodeIndex, nodeIndex + count)));
+        return Map.copyOf(next);
     }
 }
