@@ -237,7 +237,7 @@ final class TooltipTemplateRuntime {
                 combinedStyleMap,
                 combinedTemplateValues,
                 combinedGlyphValues,
-                TooltipTranslationSupport.findDominantParagraphBodyStyleId(combinedTemplateKey.toString(), combinedStyleMap),
+                TooltipParagraphSupport.findDominantParagraphBodyStyleId(combinedTemplateKey.toString(), combinedStyleMap),
                 computeParagraphWrapWidth(preparedLines)
         );
     }
@@ -904,7 +904,7 @@ final class TooltipTemplateRuntime {
         }
     }
 
-    private static String truncateForLog(String value, int maxLength) {
+    static String truncateForLog(String value, int maxLength) {
         if (value == null) {
             return "";
         }
