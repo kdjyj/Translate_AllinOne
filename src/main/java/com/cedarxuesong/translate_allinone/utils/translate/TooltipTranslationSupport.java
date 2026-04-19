@@ -1,6 +1,12 @@
 package com.cedarxuesong.translate_allinone.utils.translate;
 
 import com.cedarxuesong.translate_allinone.Translate_AllinOne;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipRoutePlanner.TooltipParagraphBlock;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipRoutePlanner.TooltipPlan;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipRoutePlanner.TooltipRouteKind;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipRoutePlanner.TooltipRouteSegment;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipTemplateRuntime.PreparedParagraphTemplate;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipTemplateRuntime.PreparedTooltipTemplate;
 import com.cedarxuesong.translate_allinone.utils.AnimationManager;
 import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
@@ -28,34 +34,23 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class TooltipTranslationSupport {
     private static final String MISSING_KEY_HINT = "missing key";
     private static final String KEY_MISMATCH_HINT = "key mismatch";
-    private static final String STORED_LEGACY_PREFIX = "[taio:legacy]";
     private static final String TOOLTIP_REFRESH_NOTICE_KEY = "text.translate_allinone.item.tooltip_refresh_forced";
     private static final long REFRESH_NOTICE_DURATION_MILLIS = 1500L;
-    private static final long CACHE_MIGRATION_LOG_THROTTLE_WINDOW_MILLIS = 5000L;
-    private static final int CACHE_MIGRATION_LOG_THROTTLE_STATE_LIMIT = 4096;
-    private static final long FORCE_REFRESH_COMPAT_BYPASS_MILLIS = 300_000L;
-    private static final int FORCE_REFRESH_COMPAT_BYPASS_STATE_LIMIT = 4096;
-    private static final Pattern STYLE_TAG_ID_PATTERN = Pattern.compile("</?s(\\d+)>");
-    private static final Pattern NUMERIC_PLACEHOLDER_ID_PATTERN = Pattern.compile("\\{d(\\d+)}");
-    private static final Pattern GLYPH_PLACEHOLDER_ID_PATTERN = Pattern.compile("\\{g(\\d+)}");
     private static final Pattern ENGLISH_CONNECTOR_PATTERN =
             Pattern.compile("(?i)\\b(by|to|and|of|for|in|on|from|with|the|a|an)\\b");
     private static final int MIN_PARAGRAPH_BODY_STYLE_DOMINANT_SCORE = 5;
     private static final int MIN_PARAGRAPH_BODY_RUN_SCORE = 1;
     private static final int MIN_PARAGRAPH_BODY_STYLE_DOMINANCE_PERCENT = 55;
+    private static final int MAX_NON_WYNN_MISSING_STYLE_SCORE = 8;
+    private static final int MAX_NON_WYNN_TOTAL_MISSING_STYLE_SCORE = 24;
     private static final Logger LOGGER = LoggerFactory.getLogger("Translate_AllinOne/TooltipTranslationSupport");
     private static final Set<Integer> refreshedTooltipSignaturesThisHold = new HashSet<>();
-    private static final ConcurrentHashMap<CacheMigrationLogKey, CacheMigrationLogThrottleState> cacheMigrationLogThrottle =
-            new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, Long> forceRefreshCompatBypassUntilByKey =
-            new ConcurrentHashMap<>();
     private static volatile int refreshNoticeTooltipSignature = 0;
     private static volatile long refreshNoticeExpiresAtMillis = 0L;
 
@@ -70,80 +65,6 @@ public final class TooltipTranslationSupport {
             int translatableLines,
             boolean pending,
             boolean missingKeyIssue
-    ) {
-    }
-
-    private enum CachedTranslationFormat {
-        TAGGED,
-        LEGACY
-    }
-
-    private record PreparedTooltipTemplate(
-            Text sourceLine,
-            boolean useTagStylePreservation,
-            StylePreserver.ExtractionResult styleResult,
-            TemplateProcessor.TemplateExtractionResult templateResult,
-            TemplateProcessor.DecorativeGlyphExtractionResult glyphResult,
-            String unicodeTemplate,
-            String normalizedTemplate,
-            String translationTemplateKey
-    ) {
-    }
-
-    private record CompatibilityTemplateKey(String key, CachedTranslationFormat format) {
-    }
-
-    private record AdaptedCachedTranslation(String translation, CachedTranslationFormat format) {
-    }
-
-    private record DecodedStoredTranslation(String translation, CachedTranslationFormat format) {
-    }
-
-    private record ResolvedTemplateLookup(
-            ItemTemplateCache.LookupResult lookupResult,
-            CachedTranslationFormat format,
-            Text renderedLineOverride
-    ) {
-    }
-
-    private record CacheMigrationLogKey(
-            String phase,
-            CachedTranslationFormat format,
-            String newKey,
-            String compatibilityKey
-    ) {
-    }
-
-    private static final class CacheMigrationLogThrottleState {
-        private long lastLoggedAtMillis = 0L;
-        private int suppressedCount = 0;
-    }
-
-    private record TooltipLineCandidate(
-            int lineIndex,
-            Text line,
-            boolean firstContentLine,
-            TooltipTextMatcherSupport.TooltipLineDecision decision
-    ) {
-    }
-
-    private record PreparedParagraphTemplate(
-            String translationTemplateKey,
-            Map<Integer, Style> styleMap,
-            List<String> templateValues,
-            List<String> glyphValues,
-            Integer bodyStyleId,
-            int wrapWidth
-    ) {
-    }
-
-    private record TooltipParagraphBlock(
-            int startIndex,
-            int endExclusive,
-            int startLineIndex,
-            int endLineIndex,
-            List<PreparedTooltipTemplate> preparedLines,
-            PreparedParagraphTemplate paragraphTemplate
     ) {
     }
 
@@ -177,54 +98,19 @@ public final class TooltipTranslationSupport {
     }
 
     public static TooltipLineResult translateLine(Text line, boolean useTagStylePreservation) {
-        return translatePreparedTemplate(prepareTemplate(line, useTagStylePreservation));
-    }
-
-    private static TooltipLineResult translatePreparedTemplate(PreparedTooltipTemplate preparedTemplate) {
-        ResolvedTemplateLookup resolvedLookup = resolveLookup(preparedTemplate);
-        ItemTemplateCache.LookupResult lookupResult = resolvedLookup.lookupResult();
-        ItemTemplateCache.TranslationStatus status = lookupResult.status();
-        boolean pending = status == ItemTemplateCache.TranslationStatus.PENDING || status == ItemTemplateCache.TranslationStatus.IN_PROGRESS;
-        boolean missingKeyIssue = false;
-
-        String translatedTemplate = lookupResult.translation();
-        String reassembledOriginal = TemplateProcessor.reassembleDecorativeGlyphs(
-                TemplateProcessor.reassemble(preparedTemplate.normalizedTemplate(), preparedTemplate.templateResult().values()),
-                preparedTemplate.glyphResult().values()
-        );
-        Text originalTextObject = preparedTemplate.useTagStylePreservation()
-                ? StylePreserver.reapplyStylesFromTags(reassembledOriginal, preparedTemplate.styleResult().styleMap)
-                : StylePreserver.reapplyStyles(reassembledOriginal, preparedTemplate.styleResult().styleMap);
-
-        Text finalTooltipLine;
-        if (status == ItemTemplateCache.TranslationStatus.TRANSLATED && resolvedLookup.renderedLineOverride() != null) {
-            finalTooltipLine = resolvedLookup.renderedLineOverride();
-        } else if (status == ItemTemplateCache.TranslationStatus.TRANSLATED) {
-            String reassembledTranslated = TemplateProcessor.reassembleDecorativeGlyphs(
-                    TemplateProcessor.reassemble(translatedTemplate, preparedTemplate.templateResult().values()),
-                    preparedTemplate.glyphResult().values(),
-                    true
-            );
-            finalTooltipLine = resolvedLookup.format() == CachedTranslationFormat.TAGGED
-                    ? StylePreserver.reapplyStylesFromTags(reassembledTranslated, preparedTemplate.styleResult().styleMap, true)
-                    : StylePreserver.fromLegacyText(reassembledTranslated);
-        } else if (status == ItemTemplateCache.TranslationStatus.ERROR) {
-            String errorMessage = lookupResult.errorMessage();
-            if (isMissingKeyIssue(errorMessage)) {
-                pending = true;
-                missingKeyIssue = true;
-                finalTooltipLine = originalTextObject;
-            } else {
-                finalTooltipLine = Text.literal("Error: " + errorMessage).formatted(Formatting.RED);
-            }
-        } else {
-            finalTooltipLine = AnimationManager.getAnimatedStyledText(originalTextObject, preparedTemplate.translationTemplateKey(), false);
-        }
-
-        return new TooltipLineResult(finalTooltipLine, pending, missingKeyIssue);
+        return TooltipTemplateRuntime.translateLine(line, useTagStylePreservation);
     }
 
     public static void maybeForceRefreshCurrentTooltip(List<Text> tooltip, ItemTranslateConfig config) {
+        Set<String> keysToRefresh = TooltipRoutePlanner.planTooltip(
+                tooltip,
+                config,
+                config != null && config.wynn_item_compatibility
+        ).translationTemplateKeys();
+        maybeForceRefreshCurrentTooltip(keysToRefresh, config);
+    }
+
+    private static void maybeForceRefreshCurrentTooltip(Set<String> keysToRefresh, ItemTranslateConfig config) {
         boolean isRefreshPressed = config != null
                 && config.keybinding != null
                 && KeybindingManager.isPressed(config.keybinding.refreshBinding);
@@ -235,7 +121,6 @@ public final class TooltipTranslationSupport {
             return;
         }
 
-        Set<String> keysToRefresh = collectTranslatableTemplateKeys(tooltip, config);
         if (keysToRefresh.isEmpty()) {
             return;
         }
@@ -249,7 +134,7 @@ public final class TooltipTranslationSupport {
 
         int refreshedCount = ItemTemplateCache.getInstance().forceRefresh(keysToRefresh);
         if (refreshedCount > 0) {
-            registerForceRefreshCompatBypass(keysToRefresh);
+            TooltipTemplateRuntime.registerForceRefreshCompatBypass(keysToRefresh);
             refreshNoticeTooltipSignature = tooltipSignature;
             refreshNoticeExpiresAtMillis = System.currentTimeMillis() + REFRESH_NOTICE_DURATION_MILLIS;
             LOGGER.info("Forced refresh of {} current item tooltip translation key(s).", refreshedCount);
@@ -271,8 +156,9 @@ public final class TooltipTranslationSupport {
             return tooltip;
         }
 
-        maybeForceRefreshCurrentTooltip(tooltip, config);
-        boolean showRefreshNotice = shouldShowRefreshNotice(tooltip, config);
+        TooltipPlan tooltipPlan = TooltipRoutePlanner.planTooltip(tooltip, config, config.wynn_item_compatibility);
+        maybeForceRefreshCurrentTooltip(tooltipPlan.translationTemplateKeys(), config);
+        boolean showRefreshNotice = shouldShowRefreshNotice(tooltipPlan.translationTemplateKeys());
 
         boolean isKeyPressed = KeybindingManager.isPressed(config.keybinding.binding);
         if (shouldShowOriginal(config.keybinding.mode, isKeyPressed)) {
@@ -281,10 +167,11 @@ public final class TooltipTranslationSupport {
 
         boolean emitDevLog = TooltipTextMatcherSupport.beginTooltipDevPass(config, "screen-mirror", tooltip);
         long tooltipStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
+        TooltipRoutePlanner.logLineDecisionsIfDev(tooltipPlan, config, emitDevLog, "screen-mirror");
 
         try {
-            TooltipProcessingResult processedTooltip = processTooltipLines(
-                    tooltip,
+            TooltipProcessingResult processedTooltip = processTooltipPlan(
+                    tooltipPlan,
                     config,
                     config.wynn_item_compatibility,
                     emitDevLog,
@@ -328,26 +215,36 @@ public final class TooltipTranslationSupport {
             boolean emitDevLog,
             String devSource
     ) {
-        if (tooltip == null || tooltip.isEmpty()) {
+        TooltipPlan tooltipPlan = TooltipRoutePlanner.planTooltip(tooltip, config, useTagStylePreservation);
+        TooltipRoutePlanner.logLineDecisionsIfDev(tooltipPlan, config, emitDevLog, devSource);
+        return processTooltipPlan(tooltipPlan, config, useTagStylePreservation, emitDevLog, devSource);
+    }
+
+    private static TooltipProcessingResult processTooltipPlan(
+            TooltipPlan tooltipPlan,
+            ItemTranslateConfig config,
+            boolean useTagStylePreservation,
+            boolean emitDevLog,
+            String devSource
+    ) {
+        if (tooltipPlan == null || tooltipPlan.segments() == null || tooltipPlan.segments().isEmpty()) {
             return new TooltipProcessingResult(List.of(), 0, false, false);
         }
 
-        List<TooltipLineCandidate> candidates = evaluateTooltipLines(tooltip, config, emitDevLog, devSource);
-        List<Text> translatedLines = new ArrayList<>(tooltip.size());
+        List<Text> translatedLines = new ArrayList<>(tooltipPlan.segments().size());
         int translatableLines = 0;
         boolean hasPending = false;
         boolean hasMissingKeyIssue = false;
 
-        for (int index = 0; index < candidates.size(); ) {
-            TooltipLineCandidate candidate = candidates.get(index);
-            if (candidate.decision() == null || !candidate.decision().shouldTranslate()) {
-                translatedLines.add(candidate.line());
-                index++;
+        for (TooltipRouteSegment segment : tooltipPlan.segments()) {
+            if (segment.kind() == TooltipRouteKind.PASSTHROUGH) {
+                translatedLines.add(segment.candidate() == null ? null : segment.candidate().line());
                 continue;
             }
 
-            TooltipParagraphBlock paragraphBlock = buildParagraphBlock(candidates, index, useTagStylePreservation);
-            if (paragraphBlock != null) {
+            translatableLines += segment.translatableLineCount();
+            if (segment.kind() == TooltipRouteKind.PARAGRAPH_BLOCK) {
+                TooltipParagraphBlock paragraphBlock = segment.paragraphBlock();
                 long blockStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
                 TooltipBlockTranslationAttempt blockAttempt = translateParagraphBlock(
                         paragraphBlock,
@@ -355,7 +252,6 @@ public final class TooltipTranslationSupport {
                         emitDevLog,
                         devSource
                 );
-                translatableLines += paragraphBlock.preparedLines().size();
                 for (TooltipLineResult lineResult : blockAttempt.lineResults()) {
                     if (lineResult.pending()) {
                         hasPending = true;
@@ -369,12 +265,11 @@ public final class TooltipTranslationSupport {
                 int loggableLineCount = Math.min(blockAttempt.lineResults().size(), paragraphBlock.preparedLines().size());
                 for (int offset = 0; offset < loggableLineCount; offset++) {
                     TooltipLineResult lineResult = blockAttempt.lineResults().get(offset);
-                    TooltipLineCandidate blockCandidate = candidates.get(index + offset);
                     TooltipTextMatcherSupport.logLineTranslationIfDev(
                             config,
                             emitDevLog,
                             devSource,
-                            blockCandidate.lineIndex(),
+                            paragraphBlock.startLineIndex() + offset,
                             lineResult,
                             "paragraph-block",
                             "paragraphKey=" + (paragraphBlock.paragraphTemplate().translationTemplateKey() == null
@@ -389,20 +284,46 @@ public final class TooltipTranslationSupport {
                 if (blockAttempt.missingKeyIssue()) {
                     hasMissingKeyIssue = true;
                 }
-                index = paragraphBlock.endExclusive();
                 continue;
             }
 
-            translatableLines++;
+            TooltipRouteSegment lineSegment = segment;
+            if (lineSegment.candidate() == null) {
+                continue;
+            }
+
             long lineStartedAtNanos = emitDevLog ? System.nanoTime() : 0L;
-            TooltipStructuredCaptureSupport.StructuredTooltipLineResult structuredLineResult =
-                    TooltipStructuredCaptureSupport.tryTranslateStructuredLine(candidate.line(), useTagStylePreservation);
-            String lineTemplateKey = structuredLineResult == null
-                    ? extractTemplateKey(candidate.line(), useTagStylePreservation)
-                    : null;
-            TooltipLineResult lineResult = structuredLineResult != null
-                    ? structuredLineResult.lineResult()
-                    : translateLine(candidate.line(), useTagStylePreservation);
+            TooltipStructuredCaptureSupport.StructuredTooltipLineResult structuredLineResult = null;
+            TooltipLineResult lineResult;
+            String route;
+            String detail;
+
+            if (lineSegment.kind() == TooltipRouteKind.STRUCTURED_LINE) {
+                structuredLineResult = TooltipStructuredCaptureSupport.tryTranslateStructuredLine(
+                        lineSegment.candidate().line(),
+                        useTagStylePreservation
+                );
+            }
+
+            if (structuredLineResult != null) {
+                lineResult = structuredLineResult.lineResult();
+                route = "capture";
+                detail = structuredLineResult.debugSummary();
+            } else {
+                PreparedTooltipTemplate preparedTemplate = lineSegment.preparedTemplate();
+                if (preparedTemplate == null) {
+                    preparedTemplate = TooltipTemplateRuntime.prepareTemplate(
+                            lineSegment.candidate().line(),
+                            useTagStylePreservation
+                    );
+                }
+                lineResult = TooltipTemplateRuntime.translatePreparedTemplate(preparedTemplate);
+                route = "line-template";
+                detail = "templateKey=" + (preparedTemplate.translationTemplateKey() == null
+                        ? ""
+                        : preparedTemplate.translationTemplateKey());
+            }
+
             if (lineResult.pending()) {
                 hasPending = true;
             }
@@ -414,15 +335,12 @@ public final class TooltipTranslationSupport {
                     config,
                     emitDevLog,
                     devSource,
-                    candidate.lineIndex(),
+                    lineSegment.candidate().lineIndex(),
                     lineResult,
-                    structuredLineResult != null ? "capture" : "line-template",
-                    structuredLineResult != null
-                            ? structuredLineResult.debugSummary()
-                            : "templateKey=" + (lineTemplateKey == null ? "" : lineTemplateKey),
+                    route,
+                    detail,
                     lineStartedAtNanos
             );
-            index++;
         }
 
         return new TooltipProcessingResult(translatedLines, translatableLines, hasPending, hasMissingKeyIssue);
@@ -497,12 +415,20 @@ public final class TooltipTranslationSupport {
     }
 
     public static boolean shouldShowRefreshNotice(List<Text> tooltip, ItemTranslateConfig config) {
+        Set<String> keys = TooltipRoutePlanner.planTooltip(
+                tooltip,
+                config,
+                config != null && config.wynn_item_compatibility
+        ).translationTemplateKeys();
+        return shouldShowRefreshNotice(keys);
+    }
+
+    private static boolean shouldShowRefreshNotice(Set<String> keys) {
         long expiresAt = refreshNoticeExpiresAtMillis;
         if (expiresAt <= 0L || System.currentTimeMillis() > expiresAt) {
             return false;
         }
 
-        Set<String> keys = collectTranslatableTemplateKeys(tooltip, config);
         if (keys.isEmpty()) {
             return false;
         }
@@ -528,494 +454,6 @@ public final class TooltipTranslationSupport {
         tooltipWithNotice.addAll(tooltip);
         tooltipWithNotice.add(createRefreshNoticeLine());
         return tooltipWithNotice;
-    }
-
-    private static List<TooltipLineCandidate> evaluateTooltipLines(
-            List<Text> tooltip,
-            ItemTranslateConfig config,
-            boolean emitDevLog,
-            String devSource
-    ) {
-        List<TooltipLineCandidate> candidates = new ArrayList<>(tooltip.size());
-        boolean isFirstLine = true;
-
-        for (int lineIndex = 0; lineIndex < tooltip.size(); lineIndex++) {
-            Text line = tooltip.get(lineIndex);
-            if (line == null || line.getString().trim().isEmpty() || isInternalGeneratedLine(line)) {
-                candidates.add(new TooltipLineCandidate(
-                        lineIndex,
-                        line,
-                        isFirstLine,
-                        null
-                ));
-                continue;
-            }
-
-            boolean firstContentLine = isFirstLine;
-            isFirstLine = false;
-            TooltipTextMatcherSupport.TooltipLineDecision decision =
-                    TooltipTextMatcherSupport.evaluateTooltipLine(line, firstContentLine, config);
-            TooltipTextMatcherSupport.logLineDecisionIfDev(config, emitDevLog, devSource, lineIndex, decision, line);
-            candidates.add(new TooltipLineCandidate(
-                    lineIndex,
-                    line,
-                    firstContentLine,
-                    decision
-            ));
-        }
-
-        return candidates;
-    }
-
-    private static Set<String> collectTranslatableTemplateKeys(List<Text> tooltip, ItemTranslateConfig config) {
-        Set<String> keys = new LinkedHashSet<>();
-        if (tooltip == null || tooltip.isEmpty() || config == null) {
-            return keys;
-        }
-
-        List<TooltipLineCandidate> candidates = evaluateTooltipLines(tooltip, config, false, "");
-        for (int index = 0; index < candidates.size(); ) {
-            TooltipLineCandidate candidate = candidates.get(index);
-            if (candidate.decision() == null || !candidate.decision().shouldTranslate()) {
-                index++;
-                continue;
-            }
-
-            TooltipParagraphBlock paragraphBlock = buildParagraphBlock(candidates, index, config.wynn_item_compatibility);
-            if (paragraphBlock != null) {
-                keys.add(paragraphBlock.paragraphTemplate().translationTemplateKey());
-                index = paragraphBlock.endExclusive();
-                continue;
-            }
-
-            Set<String> structuredKeys =
-                    TooltipStructuredCaptureSupport.collectStructuredTemplateKeys(candidate.line(), config.wynn_item_compatibility);
-            if (!structuredKeys.isEmpty()) {
-                keys.addAll(structuredKeys);
-                index++;
-                continue;
-            }
-
-            String translationTemplateKey = extractTemplateKey(candidate.line(), config.wynn_item_compatibility);
-            if (translationTemplateKey != null && !translationTemplateKey.isBlank()) {
-                keys.add(translationTemplateKey);
-            }
-            index++;
-        }
-        return keys;
-    }
-
-    private static TooltipParagraphBlock buildParagraphBlock(
-            List<TooltipLineCandidate> candidates,
-            int startIndex,
-            boolean useTagStylePreservation
-    ) {
-        if (!canStartParagraphBlock(candidates, startIndex)) {
-            return null;
-        }
-
-        List<PreparedTooltipTemplate> preparedLines = new ArrayList<>();
-        preparedLines.add(prepareTemplate(candidates.get(startIndex).line(), true));
-        int endExclusive = startIndex + 1;
-        while (endExclusive < candidates.size()
-                && canExtendParagraphBlock(candidates.get(endExclusive - 1), candidates.get(endExclusive))) {
-            preparedLines.add(prepareTemplate(candidates.get(endExclusive).line(), true));
-            endExclusive++;
-        }
-
-        if (preparedLines.size() <= 1) {
-            return null;
-        }
-
-        PreparedParagraphTemplate paragraphTemplate = prepareParagraphTemplate(preparedLines);
-        if (paragraphTemplate == null || paragraphTemplate.translationTemplateKey() == null
-                || paragraphTemplate.translationTemplateKey().isBlank()) {
-            return null;
-        }
-
-        return new TooltipParagraphBlock(
-                startIndex,
-                endExclusive,
-                candidates.get(startIndex).lineIndex(),
-                candidates.get(endExclusive - 1).lineIndex(),
-                preparedLines,
-                paragraphTemplate
-        );
-    }
-
-    private static boolean canStartParagraphBlock(List<TooltipLineCandidate> candidates, int startIndex) {
-        if (candidates == null || startIndex < 0 || startIndex + 1 >= candidates.size()) {
-            return false;
-        }
-
-        TooltipLineCandidate current = candidates.get(startIndex);
-        TooltipLineCandidate next = candidates.get(startIndex + 1);
-        return canExtendParagraphBlock(current, next);
-    }
-
-    private static boolean canExtendParagraphBlock(TooltipLineCandidate previous, TooltipLineCandidate next) {
-        return isParagraphLikeLine(previous)
-                && isParagraphLikeLine(next)
-                && !endsWithStrongTerminalPunctuation(previous.decision().rawText());
-    }
-
-    private static boolean isParagraphLikeLine(TooltipLineCandidate candidate) {
-        if (candidate == null
-                || candidate.line() == null
-                || candidate.firstContentLine()
-                || candidate.decision() == null
-                || !candidate.decision().shouldTranslate()) {
-            return false;
-        }
-
-        String raw = normalizeTooltipText(candidate.decision().rawText());
-        if (raw.isEmpty() || raw.indexOf(':') >= 0 || raw.indexOf('：') >= 0) {
-            return false;
-        }
-        if (!containsLetterContent(raw)) {
-            return false;
-        }
-        if (looksLikeBulletOrListLine(raw)
-                || looksLikeStructuredStatLine(raw)
-                || looksLikeDecoratedStructuredTooltipLine(raw)
-                || looksLikeStandaloneEnchantmentHeader(raw)
-                || looksLikeEnchantmentListLine(raw)
-                || looksLikeMenuEntryLine(raw)) {
-            return false;
-        }
-        return !looksLikeUppercaseHeader(raw);
-    }
-
-    private static String normalizeTooltipText(String raw) {
-        if (raw == null) {
-            return "";
-        }
-        return raw
-                .replace('\n', ' ')
-                .replace('\r', ' ')
-                .replace('\t', ' ')
-                .trim();
-    }
-
-    private static boolean containsLetterContent(String raw) {
-        if (raw == null || raw.isEmpty()) {
-            return false;
-        }
-
-        for (int offset = 0; offset < raw.length(); ) {
-            int codePoint = raw.codePointAt(offset);
-            if (Character.isLetter(codePoint)) {
-                return true;
-            }
-            offset += Character.charCount(codePoint);
-        }
-        return false;
-    }
-
-    private static boolean looksLikeUppercaseHeader(String raw) {
-        if (raw == null || raw.isEmpty()) {
-            return false;
-        }
-
-        int letterCount = 0;
-        boolean sawUppercase = false;
-        boolean sawLowercase = false;
-        for (int offset = 0; offset < raw.length(); ) {
-            int codePoint = raw.codePointAt(offset);
-            if (Character.isLetter(codePoint)) {
-                letterCount++;
-                if (Character.isUpperCase(codePoint)) {
-                    sawUppercase = true;
-                } else if (Character.isLowerCase(codePoint)) {
-                    sawLowercase = true;
-                }
-            }
-            offset += Character.charCount(codePoint);
-        }
-
-        if (letterCount >= 3 && sawUppercase && !sawLowercase) {
-            return true;
-        }
-
-        String upper = raw.toUpperCase(Locale.ROOT);
-        return upper.contains("RIGHT CLICK")
-                || upper.contains("LEFT CLICK")
-                || upper.contains("SNEAK")
-                || upper.contains("SHIFT");
-    }
-
-    private static boolean looksLikeBulletOrListLine(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-
-        String trimmed = raw.trim();
-        int first = trimmed.codePointAt(0);
-        return first == '•'
-                || first == '*'
-                || first == '-'
-                || first == '–'
-                || first == '—'
-                || first == '●'
-                || first == '▪'
-                || first == '◦'
-                || first == '‣';
-    }
-
-    private static boolean looksLikeStructuredStatLine(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-
-        String trimmed = raw.trim();
-        int first = trimmed.codePointAt(0);
-        if ((first == '+' || first == '-') && containsDigit(trimmed)) {
-            return true;
-        }
-
-        return Character.isDigit(first)
-                && countWordTokens(trimmed) <= 6
-                && (containsSymbolicMarker(trimmed) || trimmed.indexOf('%') >= 0);
-    }
-
-    private static boolean looksLikeDecoratedStructuredTooltipLine(String raw) {
-        if (raw == null || raw.isBlank() || !containsDecorativeGlyph(raw)) {
-            return false;
-        }
-
-        String visible = normalizeTooltipText(stripDecorativeGlyphsForHeuristics(raw));
-        if (visible.isEmpty()
-                || !containsLetterContent(visible)
-                || containsSentencePunctuation(visible)) {
-            return false;
-        }
-
-        int wordCount = countWordTokens(visible);
-        if (wordCount == 0 || wordCount > 8) {
-            return false;
-        }
-
-        return containsDigit(visible)
-                || visible.indexOf('%') >= 0
-                || visible.indexOf('/') >= 0;
-    }
-
-    private static boolean looksLikeMenuEntryLine(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-
-        String trimmed = raw.trim();
-        if (containsDigit(trimmed)
-                || containsSentencePunctuation(trimmed)
-                || trimmed.indexOf('/') >= 0
-                || trimmed.indexOf('\\') >= 0) {
-            return false;
-        }
-
-        String[] tokens = trimmed.split("\\s+");
-        int wordCount = 0;
-        for (String token : tokens) {
-            String normalized = trimEdgePunctuation(token);
-            if (normalized.isEmpty()) {
-                continue;
-            }
-            if (!containsLetterContent(normalized) || !isMenuWordToken(normalized)) {
-                return false;
-            }
-            wordCount++;
-        }
-
-        return wordCount >= 1 && wordCount <= 4;
-    }
-
-    private static boolean looksLikeEnchantmentListLine(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-
-        String trimmed = raw.trim();
-        if (trimmed.indexOf(',') < 0 || !containsDigit(trimmed)) {
-            return false;
-        }
-
-        String[] segments = trimmed.split(",");
-        int matchedEntries = 0;
-        for (String segment : segments) {
-            String normalized = segment == null ? "" : segment.trim();
-            if (normalized.isEmpty() || !looksLikeEnchantmentEntry(normalized)) {
-                return false;
-            }
-            matchedEntries++;
-        }
-
-        return matchedEntries >= 2;
-    }
-
-    private static boolean looksLikeStandaloneEnchantmentHeader(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-
-        String visible = normalizeTooltipText(stripDecorativeGlyphsForHeuristics(raw));
-        if (visible.isEmpty()
-                || visible.indexOf(':') >= 0
-                || visible.indexOf('：') >= 0
-                || visible.indexOf('/') >= 0
-                || visible.indexOf('\\') >= 0
-                || visible.indexOf(',') >= 0
-                || containsSentencePunctuation(visible)) {
-            return false;
-        }
-
-        String[] tokens = visible.split("\\s+");
-        if (tokens.length < 2 || tokens.length > 4) {
-            return false;
-        }
-
-        String lastToken = trimEdgePunctuation(tokens[tokens.length - 1]);
-        boolean levelLike = isIntegerToken(lastToken) || isRomanNumeralToken(lastToken);
-        boolean bonusLike = tokens.length == 2 && "bonus".equalsIgnoreCase(lastToken);
-        if (!levelLike && !bonusLike) {
-            return false;
-        }
-
-        int limit = levelLike ? tokens.length - 1 : tokens.length;
-        int titleWordCount = 0;
-        for (int index = 0; index < limit; index++) {
-            String token = trimEdgePunctuation(tokens[index]);
-            if (token.isEmpty()) {
-                return false;
-            }
-            if (isEnchantmentConnectorWord(token)) {
-                continue;
-            }
-            if (!isTitleLikeWord(token)) {
-                return false;
-            }
-            titleWordCount++;
-        }
-        return titleWordCount >= 1;
-    }
-
-    private static boolean looksLikeEnchantmentEntry(String segment) {
-        if (segment == null || segment.isBlank()) {
-            return false;
-        }
-
-        String[] tokens = segment.trim().split("\\s+");
-        if (tokens.length < 2) {
-            return false;
-        }
-
-        String levelToken = trimEdgePunctuation(tokens[tokens.length - 1]);
-        if (!isIntegerToken(levelToken)) {
-            return false;
-        }
-
-        int nameTokenCount = 0;
-        for (int i = 0; i < tokens.length - 1; i++) {
-            String token = trimEdgePunctuation(tokens[i]);
-            if (token.isEmpty() || !isLikelyEnchantmentNameToken(token)) {
-                return false;
-            }
-            nameTokenCount++;
-        }
-
-        return nameTokenCount >= 1;
-    }
-
-    private static boolean isLikelyEnchantmentNameToken(String token) {
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-
-        String normalized = token.trim();
-        if (isEnchantmentConnectorWord(normalized)) {
-            return true;
-        }
-
-        String[] parts = normalized.split("[-']");
-        boolean sawWordPart = false;
-        for (String part : parts) {
-            if (part == null || part.isEmpty()) {
-                continue;
-            }
-            if (!isTitleLikeWord(part)) {
-                return false;
-            }
-            sawWordPart = true;
-        }
-        return sawWordPart;
-    }
-
-    private static boolean isEnchantmentConnectorWord(String token) {
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-
-        String lower = token.toLowerCase(Locale.ROOT);
-        return lower.equals("of")
-                || lower.equals("the")
-                || lower.equals("and")
-                || lower.equals("for")
-                || lower.equals("to")
-                || lower.equals("in")
-                || lower.equals("on");
-    }
-
-    private static boolean isTitleLikeWord(String token) {
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-
-        boolean sawLetter = false;
-        boolean firstLetterHandled = false;
-        for (int offset = 0; offset < token.length(); ) {
-            int codePoint = token.codePointAt(offset);
-            offset += Character.charCount(codePoint);
-
-            if (!Character.isLetter(codePoint)) {
-                return false;
-            }
-
-            sawLetter = true;
-            if (!firstLetterHandled) {
-                if (!Character.isUpperCase(codePoint)) {
-                    return false;
-                }
-                firstLetterHandled = true;
-            }
-        }
-
-        return sawLetter;
-    }
-
-    private static boolean isIntegerToken(String token) {
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-
-        for (int offset = 0; offset < token.length(); ) {
-            int codePoint = token.codePointAt(offset);
-            if (!Character.isDigit(codePoint)) {
-                return false;
-            }
-            offset += Character.charCount(codePoint);
-        }
-        return true;
-    }
-
-    private static boolean isRomanNumeralToken(String token) {
-        if (token == null || token.isBlank()) {
-            return false;
-        }
-
-        String upper = token.trim().toUpperCase(Locale.ROOT);
-        if (upper.isEmpty() || upper.length() > 8) {
-            return false;
-        }
-        return upper.matches("M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})");
     }
 
     private static boolean containsDigit(String raw) {
@@ -1195,7 +633,7 @@ public final class TooltipTranslationSupport {
         List<TooltipLineResult> fallbackResults = new ArrayList<>(block.preparedLines().size());
         for (int i = 0; i < block.preparedLines().size(); i++) {
             PreparedTooltipTemplate preparedLine = block.preparedLines().get(i);
-            Text originalLine = renderOriginalPreparedLine(preparedLine);
+            Text originalLine = TooltipTemplateRuntime.renderOriginalPreparedLine(preparedLine);
             if (pending) {
                 originalLine = AnimationManager.getAnimatedStyledText(
                         originalLine,
@@ -1218,7 +656,7 @@ public final class TooltipTranslationSupport {
         boolean missingKeyIssue = false;
 
         for (PreparedTooltipTemplate preparedLine : block.preparedLines()) {
-            TooltipLineResult lineResult = translatePreparedTemplate(preparedLine);
+            TooltipLineResult lineResult = TooltipTemplateRuntime.translatePreparedTemplate(preparedLine);
             if (lineResult.pending()) {
                 pending = true;
             }
@@ -1394,137 +832,6 @@ public final class TooltipTranslationSupport {
         return language.contains("chinese") || language.contains("中文") || language.startsWith("zh");
     }
 
-    private static Text renderOriginalPreparedLine(PreparedTooltipTemplate preparedTemplate) {
-        String reassembledOriginal = TemplateProcessor.reassembleDecorativeGlyphs(
-                TemplateProcessor.reassemble(preparedTemplate.normalizedTemplate(), preparedTemplate.templateResult().values()),
-                preparedTemplate.glyphResult().values()
-        );
-        return preparedTemplate.useTagStylePreservation()
-                ? StylePreserver.reapplyStylesFromTags(reassembledOriginal, preparedTemplate.styleResult().styleMap)
-                : StylePreserver.reapplyStyles(reassembledOriginal, preparedTemplate.styleResult().styleMap);
-    }
-
-    private static PreparedParagraphTemplate prepareParagraphTemplate(List<PreparedTooltipTemplate> preparedLines) {
-        if (preparedLines == null || preparedLines.isEmpty()) {
-            return null;
-        }
-
-        Map<Integer, Style> combinedStyleMap = new HashMap<>();
-        List<String> combinedTemplateValues = new ArrayList<>();
-        List<String> combinedGlyphValues = new ArrayList<>();
-        StringBuilder combinedTemplateKey = new StringBuilder();
-        int nextStyleId = 0;
-        int nextNumericId = 0;
-        int nextGlyphId = 0;
-
-        for (PreparedTooltipTemplate preparedLine : preparedLines) {
-            if (preparedLine == null || preparedLine.normalizedTemplate() == null || preparedLine.normalizedTemplate().isBlank()) {
-                continue;
-            }
-
-            if (combinedTemplateKey.length() > 0) {
-                combinedTemplateKey.append(' ');
-            }
-            combinedTemplateKey.append(remapParagraphTemplateIds(
-                    preparedLine.normalizedTemplate(),
-                    nextStyleId,
-                    nextNumericId,
-                    nextGlyphId
-            ));
-
-            for (Map.Entry<Integer, Style> entry : preparedLine.styleResult().styleMap.entrySet()) {
-                combinedStyleMap.put(entry.getKey() + nextStyleId, entry.getValue());
-            }
-            combinedTemplateValues.addAll(preparedLine.templateResult().values());
-            combinedGlyphValues.addAll(preparedLine.glyphResult().values());
-
-            nextStyleId += countStyleIds(preparedLine.styleResult().styleMap);
-            nextNumericId += preparedLine.templateResult().values().size();
-            nextGlyphId += preparedLine.glyphResult().values().size();
-        }
-
-        if (combinedTemplateKey.isEmpty()) {
-            return null;
-        }
-
-        return new PreparedParagraphTemplate(
-                combinedTemplateKey.toString(),
-                combinedStyleMap,
-                combinedTemplateValues,
-                combinedGlyphValues,
-                findDominantParagraphBodyStyleId(combinedTemplateKey.toString(), combinedStyleMap),
-                computeParagraphWrapWidth(preparedLines)
-        );
-    }
-
-    private static String remapParagraphTemplateIds(
-            String template,
-            int styleOffset,
-            int numericOffset,
-            int glyphOffset
-    ) {
-        String remapped = remapPatternIds(template, STYLE_TAG_ID_PATTERN, "s", styleOffset, true);
-        remapped = remapPatternIds(remapped, NUMERIC_PLACEHOLDER_ID_PATTERN, "d", numericOffset, false);
-        return remapPatternIds(remapped, GLYPH_PLACEHOLDER_ID_PATTERN, "g", glyphOffset, false);
-    }
-
-    private static String remapPatternIds(
-            String input,
-            Pattern pattern,
-            String prefix,
-            int offset,
-            boolean styleTag
-    ) {
-        Matcher matcher = pattern.matcher(input);
-        StringBuilder builder = new StringBuilder();
-        while (matcher.find()) {
-            int currentId = Integer.parseInt(matcher.group(1));
-            int remappedId = currentId + offset;
-            String replacement;
-            if (styleTag) {
-                boolean closingTag = input.charAt(matcher.start() + 1) == '/';
-                replacement = closingTag
-                        ? "</" + prefix + remappedId + ">"
-                        : "<" + prefix + remappedId + ">";
-            } else {
-                replacement = "{" + prefix + remappedId + "}";
-            }
-            matcher.appendReplacement(builder, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(builder);
-        return builder.toString();
-    }
-
-    private static int countStyleIds(Map<Integer, Style> styleMap) {
-        if (styleMap == null || styleMap.isEmpty()) {
-            return 0;
-        }
-
-        int maxStyleId = -1;
-        for (Integer styleId : styleMap.keySet()) {
-            if (styleId != null && styleId > maxStyleId) {
-                maxStyleId = styleId;
-            }
-        }
-        return maxStyleId + 1;
-    }
-
-    private static int computeParagraphWrapWidth(List<PreparedTooltipTemplate> preparedLines) {
-        TextRenderer textRenderer = getTooltipTextRenderer();
-        if (textRenderer == null || preparedLines == null || preparedLines.isEmpty()) {
-            return -1;
-        }
-
-        int maxWidth = 0;
-        for (PreparedTooltipTemplate preparedLine : preparedLines) {
-            if (preparedLine == null || preparedLine.sourceLine() == null) {
-                continue;
-            }
-            maxWidth = Math.max(maxWidth, textRenderer.getWidth(preparedLine.sourceLine()));
-        }
-        return maxWidth;
-    }
-
     private static Text renderTranslatedParagraphText(
             TooltipParagraphBlock block,
             String normalizedTemplate,
@@ -1550,7 +857,7 @@ public final class TooltipTranslationSupport {
                 block,
                 reassembledTranslated
         );
-        if (containsNumericPlaceholder(reassembledTranslated)) {
+        if (TooltipTemplateRuntime.containsNumericPlaceholder(reassembledTranslated)) {
             logParagraphRenderIfDev(
                     config,
                     emitDevLog,
@@ -1702,14 +1009,16 @@ public final class TooltipTranslationSupport {
             return text;
         }
 
-        canonicalizeEquivalentParagraphStyles(runs, styleMap);
+        if (TooltipTranslationContext.shouldRequireStrictParagraphStyleCoverage()) {
+            canonicalizeEquivalentParagraphStyles(runs, styleMap);
+        }
         absorbParagraphBodyStyle(runs, styleMap, bodyStyleId);
         return serializeParagraphTaggedRuns(runs);
     }
 
     private static List<ParagraphTaggedRun> parseParagraphTaggedRuns(String text) {
         List<ParagraphTaggedRun> runs = new ArrayList<>();
-        Matcher matcher = STYLE_TAG_ID_PATTERN.matcher(text);
+        Matcher matcher = TooltipTemplateRuntime.STYLE_TAG_ID_PATTERN.matcher(text);
         int lastEnd = 0;
         Integer activeStyleId = null;
 
@@ -1792,7 +1101,7 @@ public final class TooltipTranslationSupport {
         }
     }
 
-    private static Integer findDominantParagraphBodyStyleId(String taggedText, Map<Integer, Style> styleMap) {
+    static Integer findDominantParagraphBodyStyleId(String taggedText, Map<Integer, Style> styleMap) {
         if (taggedText == null || taggedText.isBlank() || styleMap == null || styleMap.isEmpty()) {
             return null;
         }
@@ -1894,7 +1203,7 @@ public final class TooltipTranslationSupport {
     }
 
     private static int scoreParagraphBodyText(String text) {
-        if (text == null || text.isBlank() || containsDigit(text) || containsDecorativeGlyph(text)) {
+        if (text == null || text.isBlank() || containsDigit(text) || TooltipTemplateRuntime.containsDecorativeGlyph(text)) {
             return 0;
         }
 
@@ -1998,7 +1307,7 @@ public final class TooltipTranslationSupport {
         }
 
         String candidate = text.substring(startIndex, endIndex + 1);
-        return STYLE_TAG_ID_PATTERN.matcher(candidate).matches() ? endIndex : -1;
+        return TooltipTemplateRuntime.STYLE_TAG_ID_PATTERN.matcher(candidate).matches() ? endIndex : -1;
     }
 
     private static String stripParagraphStyleTags(String text) {
@@ -2157,7 +1466,7 @@ public final class TooltipTranslationSupport {
             return null;
         }
 
-        String visibleText = normalizeTooltipText(stripParagraphStyleTags(translatedTemplate));
+        String visibleText = TooltipRoutePlanner.normalizeTooltipText(stripParagraphStyleTags(translatedTemplate));
         if (visibleText.isEmpty() || !containsCjk(visibleText)) {
             return null;
         }
@@ -2182,7 +1491,7 @@ public final class TooltipTranslationSupport {
 
         int translatedCjkCount = countCjk(visibleText);
         int translatedSignalCount = countTranslatedSignalUnits(visibleText);
-        if (sourceLetterCount >= 18 && translatedSignalCount > 0 && translatedSignalCount * 3 < sourceLetterCount) {
+        if (paragraphLooksTooShortForChineseOutput(sourceLetterCount, translatedSignalCount)) {
             return "Rendered paragraph looks too short for Chinese output (sourceLetters="
                     + sourceLetterCount
                     + ", translatedSignal="
@@ -2192,6 +1501,12 @@ public final class TooltipTranslationSupport {
                     + ").";
         }
         return null;
+    }
+
+    static boolean paragraphLooksTooShortForChineseOutput(int sourceLetterCount, int translatedSignalCount) {
+        return sourceLetterCount >= 18
+                && translatedSignalCount > 0
+                && translatedSignalCount * 3 < sourceLetterCount;
     }
 
     private static String describeParagraphStyleCoverageIssue(
@@ -2223,6 +1538,9 @@ public final class TooltipTranslationSupport {
         if (missingStyles.isEmpty()) {
             return null;
         }
+        if (shouldAllowRelaxedParagraphStyleCoverage(block, sourceScores, translatedScores)) {
+            return null;
+        }
 
         return "Rendered paragraph dropped significant visual style(s). missing="
                 + summarizeParagraphVisualStyles(missingStyles)
@@ -2230,6 +1548,90 @@ public final class TooltipTranslationSupport {
                 + summarizeParagraphVisualStyles(sourceScores.keySet())
                 + " translated="
                 + summarizeParagraphVisualStyles(translatedScores.keySet());
+    }
+
+    private static boolean shouldAllowRelaxedParagraphStyleCoverage(
+            TooltipParagraphBlock block,
+            LinkedHashMap<Style, Integer> sourceScores,
+            LinkedHashMap<Style, Integer> translatedScores
+    ) {
+        if (TooltipTranslationContext.shouldRequireStrictParagraphStyleCoverage()
+                || sourceScores == null
+                || sourceScores.isEmpty()
+                || translatedScores == null
+                || translatedScores.isEmpty()) {
+            return false;
+        }
+
+        Style bodyStyle = resolveParagraphBodyVisualStyle(block);
+        boolean translatedHasBodyStyle = bodyStyle == null || translatedScores.containsKey(bodyStyle);
+        int sourceAccentStyleCount = countNonBodyParagraphStyles(sourceScores.keySet(), bodyStyle);
+        int translatedAccentStyleCount = countNonBodyParagraphStyles(translatedScores.keySet(), bodyStyle);
+        if (allowsRelaxedParagraphStyleCoverage(
+                false,
+                translatedHasBodyStyle,
+                sourceAccentStyleCount,
+                translatedAccentStyleCount
+        )) {
+            return true;
+        }
+
+        int maxMissingAccentScore = 0;
+        int totalMissingAccentScore = 0;
+        for (Map.Entry<Style, Integer> entry : sourceScores.entrySet()) {
+            Style sourceStyle = entry.getKey();
+            if (sourceStyle == null
+                    || (bodyStyle != null && bodyStyle.equals(sourceStyle))
+                    || translatedScores.containsKey(sourceStyle)) {
+                continue;
+            }
+
+            int score = entry.getValue() == null ? 0 : entry.getValue();
+            if (score <= 0) {
+                continue;
+            }
+            totalMissingAccentScore += score;
+            if (score > maxMissingAccentScore) {
+                maxMissingAccentScore = score;
+            }
+        }
+        return allowsRelaxedCompleteAccentLoss(
+                false,
+                translatedHasBodyStyle,
+                translatedAccentStyleCount,
+                maxMissingAccentScore,
+                totalMissingAccentScore
+        );
+    }
+
+    static boolean allowsRelaxedParagraphStyleCoverage(
+            boolean strictParagraphStyleCoverage,
+            boolean translatedHasBodyStyle,
+            int sourceAccentStyleCount,
+            int translatedAccentStyleCount
+    ) {
+        if (strictParagraphStyleCoverage || !translatedHasBodyStyle) {
+            return false;
+        }
+        if (sourceAccentStyleCount <= 0) {
+            return true;
+        }
+        return translatedAccentStyleCount > 0;
+    }
+
+    static boolean allowsRelaxedCompleteAccentLoss(
+            boolean strictParagraphStyleCoverage,
+            boolean translatedHasBodyStyle,
+            int translatedAccentStyleCount,
+            int maxMissingAccentScore,
+            int totalMissingAccentScore
+    ) {
+        if (strictParagraphStyleCoverage || !translatedHasBodyStyle || translatedAccentStyleCount > 0) {
+            return false;
+        }
+        return maxMissingAccentScore > 0
+                && maxMissingAccentScore <= MAX_NON_WYNN_MISSING_STYLE_SCORE
+                && totalMissingAccentScore <= MAX_NON_WYNN_TOTAL_MISSING_STYLE_SCORE;
     }
 
     private static boolean shouldApplyChineseParagraphQualityHeuristics() {
@@ -2294,7 +1696,7 @@ public final class TooltipTranslationSupport {
         return count;
     }
 
-    private static int countTranslatedSignalUnits(String text) {
+    static int countTranslatedSignalUnits(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
         }
@@ -2302,13 +1704,57 @@ public final class TooltipTranslationSupport {
         int count = 0;
         for (int offset = 0; offset < text.length(); ) {
             int codePoint = text.codePointAt(offset);
-            if (isCjkCodePoint(codePoint)
-                    || Character.isDigit(codePoint)
-                    || (codePoint >= 'A' && codePoint <= 'Z')
-                    || (codePoint >= 'a' && codePoint <= 'z')) {
+            if (isMeaningfulTranslatedSignalCodePoint(codePoint)) {
                 count++;
             }
             offset += Character.charCount(codePoint);
+        }
+        return count;
+    }
+
+    private static boolean isMeaningfulTranslatedSignalCodePoint(int codePoint) {
+        if (isCjkCodePoint(codePoint)
+                || Character.isDigit(codePoint)
+                || (codePoint >= 'A' && codePoint <= 'Z')
+                || (codePoint >= 'a' && codePoint <= 'z')) {
+            return true;
+        }
+
+        int type = Character.getType(codePoint);
+        return type == Character.MATH_SYMBOL
+                || type == Character.CURRENCY_SYMBOL
+                || type == Character.MODIFIER_SYMBOL
+                || type == Character.OTHER_SYMBOL
+                || codePoint == '%';
+    }
+
+    private static Style resolveParagraphBodyVisualStyle(TooltipParagraphBlock block) {
+        if (block == null || block.paragraphTemplate() == null || block.paragraphTemplate().bodyStyleId() == null) {
+            return null;
+        }
+
+        Map<Integer, Style> styleMap = block.paragraphTemplate().styleMap();
+        if (styleMap == null || styleMap.isEmpty()) {
+            return null;
+        }
+
+        return StylePreserver.sanitizeStyleForComparison(
+                styleMap.getOrDefault(block.paragraphTemplate().bodyStyleId(), Style.EMPTY),
+                true
+        );
+    }
+
+    private static int countNonBodyParagraphStyles(Iterable<Style> styles, Style bodyStyle) {
+        if (styles == null) {
+            return 0;
+        }
+
+        int count = 0;
+        for (Style style : styles) {
+            if (style == null || (bodyStyle != null && bodyStyle.equals(style))) {
+                continue;
+            }
+            count++;
         }
         return count;
     }
@@ -2385,7 +1831,7 @@ public final class TooltipTranslationSupport {
             int codePoint = text.codePointAt(offset);
             offset += Character.charCount(codePoint);
 
-            if (Character.isWhitespace(codePoint) || containsDecorativeGlyph(Character.toString(codePoint))) {
+            if (Character.isWhitespace(codePoint) || TooltipTemplateRuntime.containsDecorativeGlyph(Character.toString(codePoint))) {
                 continue;
             }
             if (Character.isLetterOrDigit(codePoint) || isCjkCodePoint(codePoint)) {
@@ -2416,517 +1862,8 @@ public final class TooltipTranslationSupport {
         return summary.toString();
     }
 
-    private static void registerForceRefreshCompatBypass(Iterable<String> translationTemplateKeys) {
-        if (translationTemplateKeys == null) {
-            return;
-        }
-
-        cleanupForceRefreshCompatBypassState();
-        long expiresAtMillis = System.currentTimeMillis() + FORCE_REFRESH_COMPAT_BYPASS_MILLIS;
-        for (String translationTemplateKey : translationTemplateKeys) {
-            if (translationTemplateKey == null || translationTemplateKey.isBlank()) {
-                continue;
-            }
-            forceRefreshCompatBypassUntilByKey.put(translationTemplateKey, expiresAtMillis);
-        }
-    }
-
-    private static boolean shouldBypassCompatibilityFallback(String translationTemplateKey) {
-        if (translationTemplateKey == null || translationTemplateKey.isBlank()) {
-            return false;
-        }
-
-        Long expiresAtMillis = forceRefreshCompatBypassUntilByKey.get(translationTemplateKey);
-        if (expiresAtMillis == null) {
-            return false;
-        }
-
-        long now = System.currentTimeMillis();
-        if (expiresAtMillis <= now) {
-            forceRefreshCompatBypassUntilByKey.remove(translationTemplateKey, expiresAtMillis);
-            return false;
-        }
-        return true;
-    }
-
-    private static void clearForceRefreshCompatBypass(String translationTemplateKey) {
-        if (translationTemplateKey == null || translationTemplateKey.isBlank()) {
-            return;
-        }
-        forceRefreshCompatBypassUntilByKey.remove(translationTemplateKey);
-    }
-
-    private static void cleanupForceRefreshCompatBypassState() {
-        if (forceRefreshCompatBypassUntilByKey.isEmpty()) {
-            return;
-        }
-
-        long now = System.currentTimeMillis();
-        for (var entry : forceRefreshCompatBypassUntilByKey.entrySet()) {
-            Long expiresAtMillis = entry.getValue();
-            if (expiresAtMillis == null || expiresAtMillis <= now) {
-                forceRefreshCompatBypassUntilByKey.remove(entry.getKey(), expiresAtMillis);
-            }
-        }
-
-        if (forceRefreshCompatBypassUntilByKey.size() > FORCE_REFRESH_COMPAT_BYPASS_STATE_LIMIT) {
-            forceRefreshCompatBypassUntilByKey.clear();
-        }
-    }
-
     static String extractTemplateKeyForLine(Text line, boolean useTagStylePreservation) {
-        return extractTemplateKey(line, useTagStylePreservation);
-    }
-
-    private static String extractTemplateKey(Text line, boolean useTagStylePreservation) {
-        return prepareTemplate(line, useTagStylePreservation).translationTemplateKey();
-    }
-
-    private static PreparedTooltipTemplate prepareTemplate(Text line, boolean useTagStylePreservation) {
-        boolean resolvedUseTagStylePreservation = shouldUseTagStylePreservation(line, useTagStylePreservation);
-        StylePreserver.ExtractionResult styleResult = resolvedUseTagStylePreservation
-                ? StylePreserver.extractAndMarkWithTags(line)
-                : StylePreserver.extractAndMark(line);
-        TemplateProcessor.TemplateExtractionResult templateResult = TemplateProcessor.extract(styleResult.markedText);
-        String unicodeTemplate = templateResult.template();
-        TemplateProcessor.DecorativeGlyphExtractionResult glyphResult = resolvedUseTagStylePreservation
-                ? TemplateProcessor.extractDecorativeGlyphTags(
-                unicodeTemplate,
-                styleId -> {
-                    net.minecraft.text.Style style = styleResult.styleMap.get(styleId);
-                    return style != null && style.getFont() != null;
-                }
-        )
-                : new TemplateProcessor.DecorativeGlyphExtractionResult(unicodeTemplate, List.of());
-        String normalizedTemplate = resolvedUseTagStylePreservation
-                ? TemplateProcessor.normalizeWynnInlineSpacerGlyphsInTaggedText(glyphResult.template())
-                : glyphResult.template();
-        String translationTemplateKey = resolvedUseTagStylePreservation
-                ? normalizedTemplate
-                : StylePreserver.toLegacyTemplate(unicodeTemplate, styleResult.styleMap);
-        return new PreparedTooltipTemplate(
-                line,
-                resolvedUseTagStylePreservation,
-                styleResult,
-                templateResult,
-                glyphResult,
-                unicodeTemplate,
-                normalizedTemplate,
-                translationTemplateKey
-        );
-    }
-
-    private static ResolvedTemplateLookup resolveLookup(PreparedTooltipTemplate preparedTemplate) {
-        long resolveStartedAtNanos = System.nanoTime();
-        ItemTemplateCache cache = ItemTemplateCache.getInstance();
-        CachedTranslationFormat currentFormat = preparedTemplate.useTagStylePreservation()
-                ? CachedTranslationFormat.TAGGED
-                : CachedTranslationFormat.LEGACY;
-        boolean invalidCurrentTranslation = false;
-        ItemTranslateConfig config = Translate_AllinOne.getConfig().itemTranslate;
-
-        ItemTemplateCache.LookupResult currentLookup = cache.peek(preparedTemplate.translationTemplateKey());
-        DecodedStoredTranslation decodedCurrentTranslation = decodeStoredTranslation(currentLookup.translation(), currentFormat);
-        if (currentLookup.status() == ItemTemplateCache.TranslationStatus.TRANSLATED
-                && isUsableCachedTranslation(
-                preparedTemplate,
-                decodedCurrentTranslation.translation(),
-                decodedCurrentTranslation.format()
-        )) {
-            clearForceRefreshCompatBypass(preparedTemplate.translationTemplateKey());
-            return new ResolvedTemplateLookup(
-                    translatedLookup(decodedCurrentTranslation.translation()),
-                    decodedCurrentTranslation.format(),
-                    null
-            );
-        } else if (currentLookup.status() == ItemTemplateCache.TranslationStatus.TRANSLATED) {
-            invalidCurrentTranslation = true;
-            logCacheMigrationIfDev(
-                    config,
-                    "reject-new-key",
-                    preparedTemplate.translationTemplateKey(),
-                    null,
-                    decodedCurrentTranslation.format(),
-                    false,
-                    "Current newKey cache entry still renders unresolved placeholders; forcing refresh."
-            );
-        }
-
-        if (shouldBypassCompatibilityFallback(preparedTemplate.translationTemplateKey())) {
-            if (invalidCurrentTranslation) {
-                cache.forceRefresh(List.of(preparedTemplate.translationTemplateKey()));
-                registerForceRefreshCompatBypass(List.of(preparedTemplate.translationTemplateKey()));
-                return new ResolvedTemplateLookup(
-                        new ItemTemplateCache.LookupResult(ItemTemplateCache.TranslationStatus.PENDING, "", null),
-                        currentFormat,
-                        null
-                );
-            }
-            return new ResolvedTemplateLookup(
-                    cache.lookupOrQueue(preparedTemplate.translationTemplateKey()),
-                    currentFormat,
-                    null
-            );
-        }
-
-        long collectCompatibilityKeysStartedAtNanos = System.nanoTime();
-        List<CompatibilityTemplateKey> compatibilityKeys = collectCompatibilityKeys(preparedTemplate);
-        long collectCompatibilityKeysElapsedNanos = System.nanoTime() - collectCompatibilityKeysStartedAtNanos;
-        long compatibilityScanStartedAtNanos = System.nanoTime();
-        for (CompatibilityTemplateKey compatibilityKey : compatibilityKeys) {
-            ItemTemplateCache.LookupResult compatibilityLookup = cache.peek(compatibilityKey.key());
-            if (compatibilityLookup.status() != ItemTemplateCache.TranslationStatus.TRANSLATED) {
-                continue;
-            }
-
-            DecodedStoredTranslation decodedCompatibilityTranslation = decodeStoredTranslation(
-                    compatibilityLookup.translation(),
-                    compatibilityKey.format()
-            );
-            if (!isUsableCachedTranslation(
-                    preparedTemplate,
-                    decodedCompatibilityTranslation.translation(),
-                    decodedCompatibilityTranslation.format()
-            )) {
-                continue;
-            }
-
-            Text compatibilityRenderedText = renderCompatibilityText(
-                    preparedTemplate,
-                    decodedCompatibilityTranslation.translation(),
-                    decodedCompatibilityTranslation.format()
-            );
-            AdaptedCachedTranslation adaptedTranslation = adaptCachedTranslation(
-                    preparedTemplate,
-                    decodedCompatibilityTranslation.translation(),
-                    decodedCompatibilityTranslation.format()
-            );
-            if (adaptedTranslation != null
-                    && adaptedTranslation.translation() != null
-                    && !adaptedTranslation.translation().isBlank()
-                    && isSafeAdaptedTranslation(preparedTemplate, adaptedTranslation, compatibilityRenderedText)) {
-                long promoteStartedAtNanos = System.nanoTime();
-                cache.promoteTranslation(
-                        preparedTemplate.translationTemplateKey(),
-                        encodeStoredTranslation(adaptedTranslation.translation(), adaptedTranslation.format())
-                );
-                long promoteElapsedNanos = System.nanoTime() - promoteStartedAtNanos;
-                logCacheMigrationIfDev(
-                        config,
-                        "promote",
-                        preparedTemplate.translationTemplateKey(),
-                        compatibilityKey.key(),
-                        decodedCompatibilityTranslation.format(),
-                        true,
-                        adaptedTranslation.format() == decodedCompatibilityTranslation.format()
-                                ? "Reused compatibility cache entry and wrote it into newKey."
-                                : "Reused compatibility cache entry, adapted it, and wrote it into newKey."
-                );
-                logCacheMigrationTimingIfDev(
-                        config,
-                        "promote",
-                        preparedTemplate.translationTemplateKey(),
-                        compatibilityKey.key(),
-                        decodedCompatibilityTranslation.format(),
-                        collectCompatibilityKeysElapsedNanos,
-                        System.nanoTime() - compatibilityScanStartedAtNanos,
-                        promoteElapsedNanos,
-                        System.nanoTime() - resolveStartedAtNanos,
-                        "compatibilityKeyCount=" + compatibilityKeys.size()
-                );
-                return new ResolvedTemplateLookup(
-                        translatedLookup(adaptedTranslation.translation()),
-                        adaptedTranslation.format(),
-                        null
-                );
-            }
-
-            long promoteStartedAtNanos = System.nanoTime();
-            cache.promoteTranslation(
-                    preparedTemplate.translationTemplateKey(),
-                    encodeStoredTranslation(
-                            decodedCompatibilityTranslation.translation(),
-                            decodedCompatibilityTranslation.format()
-                    )
-            );
-            long promoteElapsedNanos = System.nanoTime() - promoteStartedAtNanos;
-            logCacheMigrationIfDev(
-                    config,
-                    decodedCompatibilityTranslation.format() == CachedTranslationFormat.LEGACY
-                            ? "promote-legacy"
-                            : "promote-compatible-format",
-                    preparedTemplate.translationTemplateKey(),
-                    compatibilityKey.key(),
-                    decodedCompatibilityTranslation.format(),
-                    true,
-                    decodedCompatibilityTranslation.format() == CachedTranslationFormat.LEGACY
-                            ? "Reused compatibility cache entry and wrote legacy-compatible content into newKey."
-                            : "Reused compatibility cache entry and wrote compatible content into newKey."
-            );
-            logCacheMigrationTimingIfDev(
-                    config,
-                    decodedCompatibilityTranslation.format() == CachedTranslationFormat.LEGACY
-                            ? "promote-legacy"
-                            : "promote-compatible-format",
-                    preparedTemplate.translationTemplateKey(),
-                    compatibilityKey.key(),
-                    decodedCompatibilityTranslation.format(),
-                    collectCompatibilityKeysElapsedNanos,
-                    System.nanoTime() - compatibilityScanStartedAtNanos,
-                    promoteElapsedNanos,
-                    System.nanoTime() - resolveStartedAtNanos,
-                    "compatibilityKeyCount=" + compatibilityKeys.size()
-            );
-            return new ResolvedTemplateLookup(
-                    translatedLookup(decodedCompatibilityTranslation.translation()),
-                    decodedCompatibilityTranslation.format(),
-                    null
-            );
-        }
-
-        if (invalidCurrentTranslation) {
-            cache.forceRefresh(List.of(preparedTemplate.translationTemplateKey()));
-            return new ResolvedTemplateLookup(
-                    new ItemTemplateCache.LookupResult(ItemTemplateCache.TranslationStatus.PENDING, "", null),
-                    currentFormat,
-                    null
-            );
-        }
-
-        return new ResolvedTemplateLookup(cache.lookupOrQueue(preparedTemplate.translationTemplateKey()), currentFormat, null);
-    }
-
-    private static ItemTemplateCache.LookupResult translatedLookup(String translation) {
-        return new ItemTemplateCache.LookupResult(
-                ItemTemplateCache.TranslationStatus.TRANSLATED,
-                translation,
-                null
-        );
-    }
-
-    private static List<CompatibilityTemplateKey> collectCompatibilityKeys(PreparedTooltipTemplate preparedTemplate) {
-        if (!preparedTemplate.useTagStylePreservation()) {
-            return List.of();
-        }
-
-        List<CompatibilityTemplateKey> compatibilityKeys = new ArrayList<>(2);
-        addCompatibilityKey(
-                compatibilityKeys,
-                TemplateProcessor.normalizeWynnInlineSpacerGlyphsInTaggedText(
-                        TemplateProcessor.extractDecorativeGlyphTags(preparedTemplate.unicodeTemplate()).template()
-                ),
-                CachedTranslationFormat.TAGGED
-        );
-        addCompatibilityKey(
-                compatibilityKeys,
-                buildLegacyCompatibilityKey(preparedTemplate.sourceLine()),
-                CachedTranslationFormat.LEGACY
-        );
-        return compatibilityKeys;
-    }
-
-    private static void addCompatibilityKey(
-            List<CompatibilityTemplateKey> compatibilityKeys,
-            String key,
-            CachedTranslationFormat format
-    ) {
-        if (key == null || key.isBlank()) {
-            return;
-        }
-
-        for (CompatibilityTemplateKey existing : compatibilityKeys) {
-            if (existing.key().equals(key)) {
-                return;
-            }
-        }
-
-        compatibilityKeys.add(new CompatibilityTemplateKey(key, format));
-    }
-
-    private static AdaptedCachedTranslation adaptCachedTranslation(
-            PreparedTooltipTemplate preparedTemplate,
-            String cachedTranslation,
-            CachedTranslationFormat format
-    ) {
-        if (cachedTranslation == null || cachedTranslation.isBlank()) {
-            return null;
-        }
-
-        if (format == CachedTranslationFormat.LEGACY && preparedTemplate.useTagStylePreservation()) {
-            String converted = StylePreserver.convertLegacyTranslationToTaggedTemplate(
-                    cachedTranslation,
-                    preparedTemplate.styleResult().styleMap
-            );
-            if (converted == null || converted.isBlank()) {
-                return null;
-            }
-            return new AdaptedCachedTranslation(converted, CachedTranslationFormat.TAGGED);
-        }
-
-        return new AdaptedCachedTranslation(cachedTranslation, format);
-    }
-
-    private static DecodedStoredTranslation decodeStoredTranslation(String storedTranslation, CachedTranslationFormat defaultFormat) {
-        if (storedTranslation == null) {
-            return new DecodedStoredTranslation("", defaultFormat);
-        }
-
-        if (storedTranslation.startsWith(STORED_LEGACY_PREFIX)) {
-            return new DecodedStoredTranslation(
-                    storedTranslation.substring(STORED_LEGACY_PREFIX.length()),
-                    CachedTranslationFormat.LEGACY
-            );
-        }
-
-        return new DecodedStoredTranslation(storedTranslation, defaultFormat);
-    }
-
-    private static String encodeStoredTranslation(String translation, CachedTranslationFormat format) {
-        if (translation == null || translation.isBlank()) {
-            return translation;
-        }
-
-        if (format == CachedTranslationFormat.LEGACY && !translation.startsWith(STORED_LEGACY_PREFIX)) {
-            return STORED_LEGACY_PREFIX + translation;
-        }
-
-        return translation;
-    }
-
-    private static Text renderCompatibilityText(
-            PreparedTooltipTemplate preparedTemplate,
-            String cachedTranslation,
-            CachedTranslationFormat format
-    ) {
-        if (cachedTranslation == null || cachedTranslation.isBlank()) {
-            return null;
-        }
-
-        String reassembledTranslated = TemplateProcessor.reassembleDecorativeGlyphs(
-                TemplateProcessor.reassemble(cachedTranslation, preparedTemplate.templateResult().values()),
-                preparedTemplate.glyphResult().values(),
-                true
-        );
-        return format == CachedTranslationFormat.TAGGED
-                ? StylePreserver.reapplyStylesFromTags(reassembledTranslated, preparedTemplate.styleResult().styleMap, true)
-                : StylePreserver.fromLegacyText(reassembledTranslated);
-    }
-
-    private static boolean isSafeAdaptedTranslation(
-            PreparedTooltipTemplate preparedTemplate,
-            AdaptedCachedTranslation adaptedTranslation,
-            Text compatibilityRenderedText
-    ) {
-        if (adaptedTranslation == null
-                || adaptedTranslation.format() != CachedTranslationFormat.TAGGED
-                || adaptedTranslation.translation() == null
-                || adaptedTranslation.translation().isBlank()) {
-            return false;
-        }
-
-        String reassembledTranslated = TemplateProcessor.reassembleDecorativeGlyphs(
-                TemplateProcessor.reassemble(adaptedTranslation.translation(), preparedTemplate.templateResult().values()),
-                preparedTemplate.glyphResult().values(),
-                true
-        );
-        if (containsNumericPlaceholder(reassembledTranslated)) {
-            return false;
-        }
-
-        Text adaptedRenderedText = StylePreserver.reapplyStylesFromTags(
-                reassembledTranslated,
-                preparedTemplate.styleResult().styleMap,
-                true
-        );
-        if (adaptedRenderedText == null) {
-            return false;
-        }
-        if (compatibilityRenderedText == null) {
-            return true;
-        }
-        return adaptedRenderedText.getString().equals(compatibilityRenderedText.getString());
-    }
-
-    private static boolean isUsableCachedTranslation(
-            PreparedTooltipTemplate preparedTemplate,
-            String cachedTranslation,
-            CachedTranslationFormat format
-    ) {
-        Text renderedText = renderCompatibilityText(preparedTemplate, cachedTranslation, format);
-        return renderedText != null && !containsNumericPlaceholder(renderedText.getString());
-    }
-
-    private static boolean containsNumericPlaceholder(String text) {
-        if (text == null || text.isEmpty()) {
-            return false;
-        }
-        return text.contains("{d1}") || text.matches(".*\\{d\\d+}.*");
-    }
-
-    private static void logCacheMigrationIfDev(
-            ItemTranslateConfig config,
-            String phase,
-            String newKey,
-            String compatibilityKey,
-            CachedTranslationFormat compatibilityFormat,
-            boolean promoted,
-            String detail
-    ) {
-        if (!TooltipTextMatcherSupport.shouldLogItemCacheMigration(config)) {
-            return;
-        }
-
-        int suppressedCount = acquireCacheMigrationLogSlot(phase, compatibilityFormat, newKey, compatibilityKey);
-        if (suppressedCount < 0) {
-            return;
-        }
-
-        LOGGER.info(
-                "[ItemDev:cache-migration] phase={} promoted={} format={} repeatsSuppressed={} newKey=\"{}\" compatibilityKey=\"{}\" detail=\"{}\"",
-                phase,
-                promoted,
-                compatibilityFormat == null ? "" : compatibilityFormat.name(),
-                suppressedCount,
-                truncateForLog(newKey, 220),
-                truncateForLog(compatibilityKey, 220),
-                truncateForLog(detail, 220)
-        );
-    }
-
-    private static void logCacheMigrationTimingIfDev(
-            ItemTranslateConfig config,
-            String phase,
-            String newKey,
-            String compatibilityKey,
-            CachedTranslationFormat compatibilityFormat,
-            long collectCompatibilityKeysElapsedNanos,
-            long compatibilityScanElapsedNanos,
-            long promoteElapsedNanos,
-            long totalElapsedNanos,
-            String detail
-    ) {
-        if (!TooltipTextMatcherSupport.shouldLogItemCacheMigration(config)) {
-            return;
-        }
-
-        LOGGER.info(
-                "[ItemDev:cache-hotspot] phase={} thread=\"{}\" renderThread={} format={} totalMs={} collectKeysMs={} scanMs={} promoteMs={} newKey=\"{}\" compatibilityKey=\"{}\" detail=\"{}\"",
-                phase,
-                Thread.currentThread().getName(),
-                Thread.currentThread().getName().contains("Render thread"),
-                compatibilityFormat == null ? "" : compatibilityFormat.name(),
-                formatDevDurationMillis(totalElapsedNanos),
-                formatDevDurationMillis(collectCompatibilityKeysElapsedNanos),
-                formatDevDurationMillis(compatibilityScanElapsedNanos),
-                formatDevDurationMillis(promoteElapsedNanos),
-                truncateForLog(newKey, 220),
-                truncateForLog(compatibilityKey, 220),
-                truncateForLog(detail, 220)
-        );
-    }
-
-    private static String formatDevDurationMillis(long elapsedNanos) {
-        return String.format(Locale.ROOT, "%.2f", elapsedNanos / 1_000_000.0);
+        return TooltipTemplateRuntime.extractTemplateKeyForLine(line, useTagStylePreservation);
     }
 
     private static void logParagraphRenderIfDev(
@@ -2996,7 +1933,7 @@ public final class TooltipTranslationSupport {
             return usedStyleIds;
         }
 
-        Matcher matcher = STYLE_TAG_ID_PATTERN.matcher(taggedText);
+        Matcher matcher = TooltipTemplateRuntime.STYLE_TAG_ID_PATTERN.matcher(taggedText);
         while (matcher.find()) {
             usedStyleIds.add(Integer.parseInt(matcher.group(1)));
         }
@@ -3083,40 +2020,6 @@ public final class TooltipTranslationSupport {
         return String.format(Locale.ROOT, "#%06X", rgb);
     }
 
-    private static int acquireCacheMigrationLogSlot(
-            String phase,
-            CachedTranslationFormat compatibilityFormat,
-            String newKey,
-            String compatibilityKey
-    ) {
-        if ("promote".equals(phase)) {
-            return 0;
-        }
-
-        if (cacheMigrationLogThrottle.size() > CACHE_MIGRATION_LOG_THROTTLE_STATE_LIMIT) {
-            cacheMigrationLogThrottle.clear();
-        }
-
-        CacheMigrationLogKey logKey = new CacheMigrationLogKey(phase, compatibilityFormat, newKey, compatibilityKey);
-        CacheMigrationLogThrottleState state = cacheMigrationLogThrottle.computeIfAbsent(
-                logKey,
-                unused -> new CacheMigrationLogThrottleState()
-        );
-        long now = System.currentTimeMillis();
-        synchronized (state) {
-            if (state.lastLoggedAtMillis > 0
-                    && now - state.lastLoggedAtMillis < CACHE_MIGRATION_LOG_THROTTLE_WINDOW_MILLIS) {
-                state.suppressedCount++;
-                return -1;
-            }
-
-            int suppressedCount = state.suppressedCount;
-            state.suppressedCount = 0;
-            state.lastLoggedAtMillis = now;
-            return suppressedCount;
-        }
-    }
-
     private static String truncateForLog(String value, int maxLength) {
         if (value == null) {
             return "";
@@ -3144,7 +2047,7 @@ public final class TooltipTranslationSupport {
                 continue;
             }
 
-            String raw = normalizeTooltipText(preparedLine.sourceLine().getString());
+            String raw = TooltipRoutePlanner.normalizeTooltipText(preparedLine.sourceLine().getString());
             if (raw.isBlank()) {
                 continue;
             }
@@ -3167,7 +2070,7 @@ public final class TooltipTranslationSupport {
                 continue;
             }
 
-            String raw = normalizeTooltipText(wrappedLine.getString());
+            String raw = TooltipRoutePlanner.normalizeTooltipText(wrappedLine.getString());
             if (raw.isBlank()) {
                 continue;
             }
@@ -3177,80 +2080,6 @@ public final class TooltipTranslationSupport {
             builder.append(raw);
         }
         return builder.toString();
-    }
-
-    private static String buildLegacyCompatibilityKey(Text line) {
-        if (line == null) {
-            return null;
-        }
-
-        StylePreserver.ExtractionResult legacyStyleResult = StylePreserver.extractAndMark(line);
-        TemplateProcessor.TemplateExtractionResult legacyTemplateResult = TemplateProcessor.extract(legacyStyleResult.markedText);
-        return StylePreserver.toLegacyTemplate(legacyTemplateResult.template(), legacyStyleResult.styleMap);
-    }
-
-    private static boolean shouldUseTagStylePreservation(Text line, boolean useTagStylePreservation) {
-        return useTagStylePreservation || requiresRichStylePreservation(line);
-    }
-
-    private static boolean requiresRichStylePreservation(Text line) {
-        if (line == null) {
-            return false;
-        }
-
-        for (FlatNode node : FlatNode.flatten(line)) {
-            if (node.style() != null && node.style().getFont() != null) {
-                return true;
-            }
-
-            String extracted = node.extractString();
-            if (containsDecorativeGlyph(extracted)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean containsDecorativeGlyph(String value) {
-        if (value == null || value.isEmpty()) {
-            return false;
-        }
-
-        for (int offset = 0; offset < value.length(); ) {
-            int codePoint = value.codePointAt(offset);
-            if (isDecorativeGlyphCodePoint(codePoint)) {
-                return true;
-            }
-            offset += Character.charCount(codePoint);
-        }
-        return false;
-    }
-
-    private static String stripDecorativeGlyphsForHeuristics(String raw) {
-        if (raw == null || raw.isEmpty()) {
-            return "";
-        }
-
-        StringBuilder builder = new StringBuilder(raw.length());
-        for (int offset = 0; offset < raw.length(); ) {
-            int codePoint = raw.codePointAt(offset);
-            if (isDecorativeGlyphCodePoint(codePoint)) {
-                builder.append(' ');
-            } else {
-                builder.appendCodePoint(codePoint);
-            }
-            offset += Character.charCount(codePoint);
-        }
-        return builder.toString();
-    }
-
-    private static boolean isDecorativeGlyphCodePoint(int codePoint) {
-        int unicodeType = Character.getType(codePoint);
-        return unicodeType == Character.PRIVATE_USE
-                || unicodeType == Character.UNASSIGNED
-                || (codePoint >= 0xE000 && codePoint <= 0xF8FF)
-                || (codePoint >= 0xF0000 && codePoint <= 0xFFFFD)
-                || (codePoint >= 0x100000 && codePoint <= 0x10FFFD);
     }
 
     private static int computeTooltipSignature(Set<String> keys) {

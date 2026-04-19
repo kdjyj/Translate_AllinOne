@@ -151,6 +151,12 @@ public final class TooltipTranslationContext {
         return true;
     }
 
+    public static boolean shouldRequireStrictParagraphStyleCoverage() {
+        return isInWynnmodTooltipRender()
+                || isInWynntilsItemStatTooltipRender()
+                || isInWynntilsQuestTooltipRender();
+    }
+
     public static void rememberRecentTranslatedTooltip(List<Text> tooltipLines) {
         if (tooltipLines == null || tooltipLines.isEmpty()) {
             RECENT_TRANSLATED_TOOLTIP_SIGNATURE.set(0);

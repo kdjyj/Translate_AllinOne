@@ -1,0 +1,776 @@
+package com.cedarxuesong.translate_allinone.utils.translate;
+
+import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
+import net.minecraft.text.Text;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+final class TooltipRoutePlanner {
+    private TooltipRoutePlanner() {
+    }
+
+    enum TooltipRouteKind {
+        PASSTHROUGH,
+        PARAGRAPH_BLOCK,
+        STRUCTURED_LINE,
+        LINE_TEMPLATE
+    }
+
+    record TooltipLineCandidate(
+            int lineIndex,
+            Text line,
+            boolean firstContentLine,
+            TooltipTextMatcherSupport.TooltipLineDecision decision
+    ) {
+    }
+
+    record TooltipParagraphBlock(
+            int startIndex,
+            int endExclusive,
+            int startLineIndex,
+            int endLineIndex,
+            List<TooltipTemplateRuntime.PreparedTooltipTemplate> preparedLines,
+            TooltipTemplateRuntime.PreparedParagraphTemplate paragraphTemplate
+    ) {
+    }
+
+    record TooltipRouteSegment(
+            TooltipRouteKind kind,
+            int startIndex,
+            int endExclusive,
+            int translatableLineCount,
+            TooltipLineCandidate candidate,
+            TooltipParagraphBlock paragraphBlock,
+            TooltipTemplateRuntime.PreparedTooltipTemplate preparedTemplate,
+            Set<String> translationTemplateKeys
+    ) {
+    }
+
+    record TooltipPlan(
+            List<TooltipLineCandidate> candidates,
+            List<TooltipRouteSegment> segments,
+            Set<String> translationTemplateKeys
+    ) {
+    }
+
+    static TooltipPlan planTooltip(List<Text> tooltip, ItemTranslateConfig config, boolean useTagStylePreservation) {
+        if (tooltip == null || tooltip.isEmpty()) {
+            return new TooltipPlan(List.of(), List.of(), Collections.emptySet());
+        }
+
+        List<TooltipLineCandidate> candidates = evaluateTooltipLines(tooltip, config);
+        List<TooltipRouteSegment> segments = new ArrayList<>(candidates.size());
+        LinkedHashSet<String> allTranslationTemplateKeys = new LinkedHashSet<>();
+
+        for (int index = 0; index < candidates.size(); ) {
+            TooltipLineCandidate candidate = candidates.get(index);
+            if (candidate.decision() == null || !candidate.decision().shouldTranslate()) {
+                segments.add(new TooltipRouteSegment(
+                        TooltipRouteKind.PASSTHROUGH,
+                        index,
+                        index + 1,
+                        0,
+                        candidate,
+                        null,
+                        null,
+                        Set.of()
+                ));
+                index++;
+                continue;
+            }
+
+            TooltipParagraphBlock paragraphBlock = buildParagraphBlock(candidates, index);
+            if (paragraphBlock != null) {
+                Set<String> blockKeys = singleKeySet(paragraphBlock.paragraphTemplate().translationTemplateKey());
+                allTranslationTemplateKeys.addAll(blockKeys);
+                segments.add(new TooltipRouteSegment(
+                        TooltipRouteKind.PARAGRAPH_BLOCK,
+                        index,
+                        paragraphBlock.endExclusive(),
+                        paragraphBlock.preparedLines().size(),
+                        candidate,
+                        paragraphBlock,
+                        null,
+                        blockKeys
+                ));
+                index = paragraphBlock.endExclusive();
+                continue;
+            }
+
+            Set<String> structuredKeys = TooltipStructuredCaptureSupport.collectStructuredTemplateKeys(
+                    candidate.line(),
+                    useTagStylePreservation
+            );
+            if (!structuredKeys.isEmpty()) {
+                Set<String> copiedKeys = immutableOrderedSet(structuredKeys);
+                allTranslationTemplateKeys.addAll(copiedKeys);
+                segments.add(new TooltipRouteSegment(
+                        TooltipRouteKind.STRUCTURED_LINE,
+                        index,
+                        index + 1,
+                        1,
+                        candidate,
+                        null,
+                        null,
+                        copiedKeys
+                ));
+                index++;
+                continue;
+            }
+
+            TooltipTemplateRuntime.PreparedTooltipTemplate preparedTemplate =
+                    TooltipTemplateRuntime.prepareTemplate(candidate.line(), useTagStylePreservation);
+            Set<String> lineKeys = singleKeySet(preparedTemplate.translationTemplateKey());
+            allTranslationTemplateKeys.addAll(lineKeys);
+            segments.add(new TooltipRouteSegment(
+                    TooltipRouteKind.LINE_TEMPLATE,
+                    index,
+                    index + 1,
+                    1,
+                    candidate,
+                    null,
+                    preparedTemplate,
+                    lineKeys
+            ));
+            index++;
+        }
+
+        return new TooltipPlan(
+                List.copyOf(candidates),
+                List.copyOf(segments),
+                immutableOrderedSet(allTranslationTemplateKeys)
+        );
+    }
+
+    static void logLineDecisionsIfDev(
+            TooltipPlan tooltipPlan,
+            ItemTranslateConfig config,
+            boolean emitDevLog,
+            String devSource
+    ) {
+        if (tooltipPlan == null || tooltipPlan.candidates() == null) {
+            return;
+        }
+
+        for (TooltipLineCandidate candidate : tooltipPlan.candidates()) {
+            if (candidate == null || candidate.decision() == null) {
+                continue;
+            }
+            TooltipTextMatcherSupport.logLineDecisionIfDev(
+                    config,
+                    emitDevLog,
+                    devSource,
+                    candidate.lineIndex(),
+                    candidate.decision(),
+                    candidate.line()
+            );
+        }
+    }
+
+    static String normalizeTooltipText(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw
+                .replace('\n', ' ')
+                .replace('\r', ' ')
+                .replace('\t', ' ')
+                .trim();
+    }
+
+    private static List<TooltipLineCandidate> evaluateTooltipLines(List<Text> tooltip, ItemTranslateConfig config) {
+        List<TooltipLineCandidate> candidates = new ArrayList<>(tooltip.size());
+        boolean isFirstLine = true;
+
+        for (int lineIndex = 0; lineIndex < tooltip.size(); lineIndex++) {
+            Text line = tooltip.get(lineIndex);
+            if (line == null || line.getString().trim().isEmpty() || TooltipTranslationSupport.isInternalGeneratedLine(line)) {
+                candidates.add(new TooltipLineCandidate(
+                        lineIndex,
+                        line,
+                        isFirstLine,
+                        null
+                ));
+                continue;
+            }
+
+            boolean firstContentLine = isFirstLine;
+            isFirstLine = false;
+            TooltipTextMatcherSupport.TooltipLineDecision decision =
+                    TooltipTextMatcherSupport.evaluateTooltipLine(line, firstContentLine, config);
+            candidates.add(new TooltipLineCandidate(
+                    lineIndex,
+                    line,
+                    firstContentLine,
+                    decision
+            ));
+        }
+
+        return candidates;
+    }
+
+    private static TooltipParagraphBlock buildParagraphBlock(List<TooltipLineCandidate> candidates, int startIndex) {
+        if (!canStartParagraphBlock(candidates, startIndex)) {
+            return null;
+        }
+
+        List<TooltipTemplateRuntime.PreparedTooltipTemplate> preparedLines = new ArrayList<>();
+        preparedLines.add(TooltipTemplateRuntime.prepareTemplate(candidates.get(startIndex).line(), true));
+        int endExclusive = startIndex + 1;
+        while (endExclusive < candidates.size()
+                && canExtendParagraphBlock(candidates.get(endExclusive - 1), candidates.get(endExclusive))) {
+            preparedLines.add(TooltipTemplateRuntime.prepareTemplate(candidates.get(endExclusive).line(), true));
+            endExclusive++;
+        }
+
+        if (preparedLines.size() <= 1) {
+            return null;
+        }
+
+        TooltipTemplateRuntime.PreparedParagraphTemplate paragraphTemplate =
+                TooltipTemplateRuntime.prepareParagraphTemplate(preparedLines);
+        if (paragraphTemplate == null
+                || paragraphTemplate.translationTemplateKey() == null
+                || paragraphTemplate.translationTemplateKey().isBlank()) {
+            return null;
+        }
+
+        return new TooltipParagraphBlock(
+                startIndex,
+                endExclusive,
+                candidates.get(startIndex).lineIndex(),
+                candidates.get(endExclusive - 1).lineIndex(),
+                List.copyOf(preparedLines),
+                paragraphTemplate
+        );
+    }
+
+    private static boolean canStartParagraphBlock(List<TooltipLineCandidate> candidates, int startIndex) {
+        if (candidates == null || startIndex < 0 || startIndex + 1 >= candidates.size()) {
+            return false;
+        }
+
+        TooltipLineCandidate current = candidates.get(startIndex);
+        TooltipLineCandidate next = candidates.get(startIndex + 1);
+        return canExtendParagraphBlock(current, next);
+    }
+
+    private static boolean canExtendParagraphBlock(TooltipLineCandidate previous, TooltipLineCandidate next) {
+        return isParagraphLikeLine(previous)
+                && isParagraphLikeLine(next)
+                && !endsWithStrongTerminalPunctuation(previous.decision().rawText());
+    }
+
+    private static boolean isParagraphLikeLine(TooltipLineCandidate candidate) {
+        if (candidate == null
+                || candidate.line() == null
+                || candidate.firstContentLine()
+                || candidate.decision() == null
+                || !candidate.decision().shouldTranslate()) {
+            return false;
+        }
+
+        String raw = normalizeTooltipText(candidate.decision().rawText());
+        if (raw.isEmpty() || raw.indexOf(':') >= 0 || raw.indexOf('：') >= 0) {
+            return false;
+        }
+        if (!containsLetterContent(raw)) {
+            return false;
+        }
+        if (looksLikeBulletOrListLine(raw)
+                || looksLikeStructuredStatLine(raw)
+                || looksLikeDecoratedStructuredTooltipLine(raw)
+                || looksLikeStandaloneEnchantmentHeader(raw)
+                || looksLikeEnchantmentListLine(raw)
+                || looksLikeMenuEntryLine(raw)) {
+            return false;
+        }
+        return !looksLikeUppercaseHeader(raw);
+    }
+
+    private static boolean containsLetterContent(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+
+        for (int offset = 0; offset < raw.length(); ) {
+            int codePoint = raw.codePointAt(offset);
+            if (Character.isLetter(codePoint)) {
+                return true;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return false;
+    }
+
+    private static boolean looksLikeUppercaseHeader(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+
+        int letterCount = 0;
+        boolean sawUppercase = false;
+        boolean sawLowercase = false;
+        for (int offset = 0; offset < raw.length(); ) {
+            int codePoint = raw.codePointAt(offset);
+            if (Character.isLetter(codePoint)) {
+                letterCount++;
+                if (Character.isUpperCase(codePoint)) {
+                    sawUppercase = true;
+                } else if (Character.isLowerCase(codePoint)) {
+                    sawLowercase = true;
+                }
+            }
+            offset += Character.charCount(codePoint);
+        }
+
+        if (letterCount >= 3 && sawUppercase && !sawLowercase) {
+            return true;
+        }
+
+        String upper = raw.toUpperCase(Locale.ROOT);
+        return upper.contains("RIGHT CLICK")
+                || upper.contains("LEFT CLICK")
+                || upper.contains("SNEAK")
+                || upper.contains("SHIFT");
+    }
+
+    private static boolean looksLikeBulletOrListLine(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String trimmed = raw.trim();
+        int first = trimmed.codePointAt(0);
+        return first == '•'
+                || first == '*'
+                || first == '-'
+                || first == '–'
+                || first == '—'
+                || first == '●'
+                || first == '▪'
+                || first == '◦'
+                || first == '‣';
+    }
+
+    private static boolean looksLikeStructuredStatLine(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String trimmed = raw.trim();
+        int first = trimmed.codePointAt(0);
+        if ((first == '+' || first == '-') && containsDigit(trimmed)) {
+            return true;
+        }
+
+        return Character.isDigit(first)
+                && countWordTokens(trimmed) <= 6
+                && (containsSymbolicMarker(trimmed) || trimmed.indexOf('%') >= 0);
+    }
+
+    private static boolean looksLikeDecoratedStructuredTooltipLine(String raw) {
+        if (raw == null || raw.isBlank() || !TooltipTemplateRuntime.containsDecorativeGlyph(raw)) {
+            return false;
+        }
+
+        String visible = normalizeTooltipText(TooltipTemplateRuntime.stripDecorativeGlyphsForHeuristics(raw));
+        if (visible.isEmpty()
+                || !containsLetterContent(visible)
+                || containsSentencePunctuation(visible)) {
+            return false;
+        }
+
+        int wordCount = countWordTokens(visible);
+        if (wordCount == 0 || wordCount > 8) {
+            return false;
+        }
+
+        return containsDigit(visible)
+                || visible.indexOf('%') >= 0
+                || visible.indexOf('/') >= 0;
+    }
+
+    private static boolean looksLikeMenuEntryLine(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String trimmed = raw.trim();
+        if (containsDigit(trimmed)
+                || containsSentencePunctuation(trimmed)
+                || trimmed.indexOf('/') >= 0
+                || trimmed.indexOf('\\') >= 0) {
+            return false;
+        }
+
+        String[] tokens = trimmed.split("\\s+");
+        int wordCount = 0;
+        for (String token : tokens) {
+            String normalized = trimEdgePunctuation(token);
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            if (!containsLetterContent(normalized) || !isMenuWordToken(normalized)) {
+                return false;
+            }
+            wordCount++;
+        }
+
+        return wordCount >= 1 && wordCount <= 4;
+    }
+
+    private static boolean looksLikeEnchantmentListLine(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String trimmed = raw.trim();
+        if (trimmed.indexOf(',') < 0 || !containsDigit(trimmed)) {
+            return false;
+        }
+
+        String[] segments = trimmed.split(",");
+        int matchedEntries = 0;
+        for (String segment : segments) {
+            String normalized = segment == null ? "" : segment.trim();
+            if (normalized.isEmpty() || !looksLikeEnchantmentEntry(normalized)) {
+                return false;
+            }
+            matchedEntries++;
+        }
+
+        return matchedEntries >= 2;
+    }
+
+    private static boolean looksLikeStandaloneEnchantmentHeader(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String visible = normalizeTooltipText(TooltipTemplateRuntime.stripDecorativeGlyphsForHeuristics(raw));
+        if (visible.isEmpty()
+                || visible.indexOf(':') >= 0
+                || visible.indexOf('：') >= 0
+                || visible.indexOf('/') >= 0
+                || visible.indexOf('\\') >= 0
+                || visible.indexOf(',') >= 0
+                || containsSentencePunctuation(visible)) {
+            return false;
+        }
+
+        String[] tokens = visible.split("\\s+");
+        if (tokens.length < 2 || tokens.length > 4) {
+            return false;
+        }
+
+        String lastToken = trimEdgePunctuation(tokens[tokens.length - 1]);
+        boolean levelLike = isIntegerToken(lastToken) || isRomanNumeralToken(lastToken);
+        boolean bonusLike = tokens.length == 2 && "bonus".equalsIgnoreCase(lastToken);
+        if (!levelLike && !bonusLike) {
+            return false;
+        }
+
+        int limit = levelLike ? tokens.length - 1 : tokens.length;
+        int titleWordCount = 0;
+        for (int index = 0; index < limit; index++) {
+            String token = trimEdgePunctuation(tokens[index]);
+            if (token.isEmpty()) {
+                return false;
+            }
+            if (isEnchantmentConnectorWord(token)) {
+                continue;
+            }
+            if (!isTitleLikeWord(token)) {
+                return false;
+            }
+            titleWordCount++;
+        }
+        return titleWordCount >= 1;
+    }
+
+    private static boolean looksLikeEnchantmentEntry(String segment) {
+        if (segment == null || segment.isBlank()) {
+            return false;
+        }
+
+        String[] tokens = segment.trim().split("\\s+");
+        if (tokens.length < 2) {
+            return false;
+        }
+
+        String levelToken = trimEdgePunctuation(tokens[tokens.length - 1]);
+        if (!isIntegerToken(levelToken)) {
+            return false;
+        }
+
+        int nameTokenCount = 0;
+        for (int index = 0; index < tokens.length - 1; index++) {
+            String token = trimEdgePunctuation(tokens[index]);
+            if (token.isEmpty() || !isLikelyEnchantmentNameToken(token)) {
+                return false;
+            }
+            nameTokenCount++;
+        }
+
+        return nameTokenCount >= 1;
+    }
+
+    private static boolean isLikelyEnchantmentNameToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+
+        String normalized = token.trim();
+        if (isEnchantmentConnectorWord(normalized)) {
+            return true;
+        }
+
+        String[] parts = normalized.split("[-']");
+        boolean sawWordPart = false;
+        for (String part : parts) {
+            if (part == null || part.isEmpty()) {
+                continue;
+            }
+            if (!isTitleLikeWord(part)) {
+                return false;
+            }
+            sawWordPart = true;
+        }
+        return sawWordPart;
+    }
+
+    private static boolean isEnchantmentConnectorWord(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+
+        String lower = token.toLowerCase(Locale.ROOT);
+        return lower.equals("of")
+                || lower.equals("the")
+                || lower.equals("and")
+                || lower.equals("for")
+                || lower.equals("to")
+                || lower.equals("in")
+                || lower.equals("on");
+    }
+
+    private static boolean isTitleLikeWord(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+
+        boolean sawLetter = false;
+        boolean firstLetterHandled = false;
+        for (int offset = 0; offset < token.length(); ) {
+            int codePoint = token.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+
+            if (!Character.isLetter(codePoint)) {
+                return false;
+            }
+
+            sawLetter = true;
+            if (!firstLetterHandled) {
+                if (!Character.isUpperCase(codePoint)) {
+                    return false;
+                }
+                firstLetterHandled = true;
+            }
+        }
+
+        return sawLetter;
+    }
+
+    private static boolean isIntegerToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+
+        for (int offset = 0; offset < token.length(); ) {
+            int codePoint = token.codePointAt(offset);
+            if (!Character.isDigit(codePoint)) {
+                return false;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return true;
+    }
+
+    private static boolean isRomanNumeralToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+
+        String upper = token.trim().toUpperCase(Locale.ROOT);
+        if (upper.isEmpty() || upper.length() > 8) {
+            return false;
+        }
+        return upper.matches("M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})");
+    }
+
+    private static boolean containsDigit(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+
+        for (int offset = 0; offset < raw.length(); ) {
+            int codePoint = raw.codePointAt(offset);
+            if (Character.isDigit(codePoint)) {
+                return true;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return false;
+    }
+
+    private static int countWordTokens(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (String token : raw.trim().split("\\s+")) {
+            if (!trimEdgePunctuation(token).isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static boolean containsSymbolicMarker(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+
+        for (int offset = 0; offset < raw.length(); ) {
+            int codePoint = raw.codePointAt(offset);
+            if (!Character.isLetterOrDigit(codePoint)
+                    && !Character.isWhitespace(codePoint)
+                    && codePoint != '.'
+                    && codePoint != ',') {
+                return true;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return false;
+    }
+
+    private static boolean containsSentencePunctuation(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return false;
+        }
+
+        for (int offset = 0; offset < raw.length(); ) {
+            int codePoint = raw.codePointAt(offset);
+            if (codePoint == '.'
+                    || codePoint == ','
+                    || codePoint == '!'
+                    || codePoint == '?'
+                    || codePoint == ';'
+                    || codePoint == ':'
+                    || codePoint == '。'
+                    || codePoint == '，'
+                    || codePoint == '！'
+                    || codePoint == '？'
+                    || codePoint == '：'
+                    || codePoint == '；') {
+                return true;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return false;
+    }
+
+    private static String trimEdgePunctuation(String token) {
+        if (token == null || token.isEmpty()) {
+            return "";
+        }
+
+        int start = 0;
+        int end = token.length();
+        while (start < end) {
+            int codePoint = token.codePointAt(start);
+            if (Character.isLetterOrDigit(codePoint)) {
+                break;
+            }
+            start += Character.charCount(codePoint);
+        }
+        while (end > start) {
+            int codePoint = token.codePointBefore(end);
+            if (Character.isLetterOrDigit(codePoint)) {
+                break;
+            }
+            end -= Character.charCount(codePoint);
+        }
+        return token.substring(start, end);
+    }
+
+    private static boolean isMenuWordToken(String token) {
+        boolean sawLetter = false;
+        boolean firstLetterHandled = false;
+
+        for (int offset = 0; offset < token.length(); ) {
+            int codePoint = token.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+
+            if (!Character.isLetter(codePoint)) {
+                if (codePoint == '\'' || codePoint == '-') {
+                    continue;
+                }
+                return false;
+            }
+
+            sawLetter = true;
+            if (!firstLetterHandled) {
+                if (!Character.isUpperCase(codePoint)) {
+                    return false;
+                }
+                firstLetterHandled = true;
+                continue;
+            }
+
+            if (!Character.isLowerCase(codePoint) && !Character.isUpperCase(codePoint)) {
+                return false;
+            }
+        }
+
+        return sawLetter;
+    }
+
+    private static boolean endsWithStrongTerminalPunctuation(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+
+        String trimmed = raw.trim();
+        int endCodePoint = trimmed.codePointBefore(trimmed.length());
+        return endCodePoint == '.'
+                || endCodePoint == '!'
+                || endCodePoint == '?'
+                || endCodePoint == '。'
+                || endCodePoint == '！'
+                || endCodePoint == '？';
+    }
+
+    private static Set<String> singleKeySet(String translationTemplateKey) {
+        if (translationTemplateKey == null || translationTemplateKey.isBlank()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        keys.add(translationTemplateKey);
+        return Collections.unmodifiableSet(keys);
+    }
+
+    private static Set<String> immutableOrderedSet(Set<String> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return Collections.emptySet();
+        }
+        return Collections.unmodifiableSet(new LinkedHashSet<>(keys));
+    }
+}

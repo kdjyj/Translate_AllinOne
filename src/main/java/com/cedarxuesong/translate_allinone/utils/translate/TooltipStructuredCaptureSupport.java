@@ -84,7 +84,7 @@ final class TooltipStructuredCaptureSupport {
             boolean useTagStylePreservation
     ) {
         TooltipTranslationSupport.TooltipLineResult labelTranslation =
-                TooltipTranslationSupport.translateLine(structuredLine.labelTranslationText(), useTagStylePreservation);
+                TooltipTemplateRuntime.translateLine(structuredLine.labelTranslationText(), useTagStylePreservation);
         if (isErrorTranslation(labelTranslation.translatedLine())) {
             return new StructuredTooltipLineResult(
                     labelTranslation,
@@ -95,7 +95,7 @@ final class TooltipStructuredCaptureSupport {
 
         TooltipTranslationSupport.TooltipLineResult valueTranslation = null;
         if (structuredLine.kind().translateValue()) {
-            valueTranslation = TooltipTranslationSupport.translateLine(structuredLine.valueTranslationText(), useTagStylePreservation);
+            valueTranslation = TooltipTemplateRuntime.translateLine(structuredLine.valueTranslationText(), useTagStylePreservation);
             if (isErrorTranslation(valueTranslation.translatedLine())) {
                 return new StructuredTooltipLineResult(
                         valueTranslation,
@@ -151,7 +151,7 @@ final class TooltipStructuredCaptureSupport {
         }
 
         Text labelTranslationText = toCompactedText(labelNodes);
-        String labelKey = TooltipTranslationSupport.extractTemplateKeyForLine(labelTranslationText, useTagStylePreservation);
+        String labelKey = TooltipTemplateRuntime.extractTemplateKeyForLine(labelTranslationText, useTagStylePreservation);
         if (labelKey == null || labelKey.isBlank()) {
             return null;
         }
@@ -160,7 +160,7 @@ final class TooltipStructuredCaptureSupport {
         Text valueTranslationText = valueText;
         if (kind.translateValue()) {
             valueTranslationText = toCompactedText(valueNodes);
-            valueKey = TooltipTranslationSupport.extractTemplateKeyForLine(valueTranslationText, useTagStylePreservation);
+            valueKey = TooltipTemplateRuntime.extractTemplateKeyForLine(valueTranslationText, useTagStylePreservation);
             if (valueKey == null || valueKey.isBlank()) {
                 return null;
             }
@@ -198,7 +198,7 @@ final class TooltipStructuredCaptureSupport {
             }
 
             TooltipTranslationSupport.TooltipLineResult nameTranslation =
-                    TooltipTranslationSupport.translateLine(entry.nameTranslationText(), useTagStylePreservation);
+                    TooltipTemplateRuntime.translateLine(entry.nameTranslationText(), useTagStylePreservation);
             if (isErrorTranslation(nameTranslation.translatedLine())) {
                 return new StructuredTooltipLineResult(
                         nameTranslation,
@@ -370,7 +370,7 @@ final class TooltipStructuredCaptureSupport {
             return null;
         }
 
-        String nameKey = TooltipTranslationSupport.extractTemplateKeyForLine(nameTranslationText, useTagStylePreservation);
+        String nameKey = TooltipTemplateRuntime.extractTemplateKeyForLine(nameTranslationText, useTagStylePreservation);
         if (nameKey == null || nameKey.isBlank()) {
             return null;
         }
