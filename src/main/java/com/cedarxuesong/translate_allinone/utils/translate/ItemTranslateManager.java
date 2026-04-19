@@ -281,7 +281,7 @@ public class ItemTranslateManager {
         ProviderSettings settings = ProviderSettings.fromProviderProfile(providerProfile);
         LLM llm = new LLM(settings);
 
-        String systemPrompt = buildSystemPrompt(config.target_language, providerProfile.activeSystemPromptSuffix());
+        String systemPrompt = ItemTranslationPromptSupport.buildSystemPrompt(config.target_language, providerProfile.activeSystemPromptSuffix());
         String userPrompt = GSON.toJson(batchForAI);
 
         List<OpenAIRequest.Message> messages = PromptMessageBuilder.buildMessages(
@@ -298,7 +298,7 @@ public class ItemTranslateManager {
         logDispatchEvent(config, "send", batchContext, originalTexts, inFlightAtSend);
         CompletableFuture<String> completionFuture;
         try {
-            completionFuture = llm.getCompletion(messages);
+            completionFuture = llm.getCompletion(messages, requestContext);
         } catch (Throwable error) {
             int inFlightAfter = decrementInFlightRequests();
             releaseRequestPermit();
@@ -647,25 +647,6 @@ public class ItemTranslateManager {
                 requestContext,
                 errorSummary
         );
-    }
-
-    private String buildSystemPrompt(String targetLanguage, String suffix) {
-        String basePrompt = "You are a deterministic JSON value translator.\n"
-                + "Target language: " + targetLanguage + ".\n"
-                + "\n"
-                + "Input is a JSON object with string keys and string values.\n"
-                + "Output must be one valid JSON object only.\n"
-                + "\n"
-                + "Rules:\n"
-                + "1) Keep all keys unchanged.\n"
-                + "2) Keep key count unchanged.\n"
-                + "3) Translate values only.\n"
-                + "4) Preserve style tags exactly: <s0>...</s0>, <s1>...</s1>, ... Keep the same tag ids, counts, and order.\n"
-                + "5) Preserve tokens exactly: §a §l §r %s %d %f {d1} URLs numbers <...> {...} \\n \\t.\n"
-                + "6) If a value contains line breaks, preserve the full meaning and paragraph order. Keep intentional structural breaks when they matter, but soft-wrapped tooltip text may be reflowed naturally. Do not omit words or leave connector fragments like 'by' or 'to' untranslated inside an otherwise translated sentence.\n"
-                + "7) If unsure for a value, keep that value unchanged.\n"
-                + "8) No extra text outside JSON.";
-        return PromptMessageBuilder.appendSystemPromptSuffix(basePrompt, suffix);
     }
 
     private boolean isInternalPostprocessError(Throwable throwable) {

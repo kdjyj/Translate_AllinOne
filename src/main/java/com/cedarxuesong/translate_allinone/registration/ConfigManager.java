@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.Translate_AllinOne;
 import com.cedarxuesong.translate_allinone.utils.config.ModConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ChatTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.DebugConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.InputBindingConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ProviderManagerConfig;
@@ -130,6 +131,9 @@ public class ConfigManager {
         }
         if (configToUse.cacheBackup == null) {
             configToUse.cacheBackup = new CacheBackupConfig();
+        }
+        if (configToUse.debug == null) {
+            configToUse.debug = new DebugConfig();
         }
         if (configToUse.providerManager == null) {
             configToUse.providerManager = new ProviderManagerConfig();

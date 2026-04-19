@@ -6,6 +6,7 @@ import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
 import com.cedarxuesong.translate_allinone.utils.cache.ScoreboardTextCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ChatTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.DebugConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.InputBindingConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.config.ModConfig;
@@ -244,12 +245,29 @@ public final class ConfigSectionContentSupport {
                 return routeStart + ROW_STEP;
             }
             case DEBUG -> {
+                if (config.debug == null) {
+                    config.debug = new DebugConfig();
+                }
+                DebugConfig debug = config.debug;
                 ItemTranslateConfig item = config.itemTranslate;
                 if (item.debug == null) {
                     item.debug = new ItemTranslateConfig.DebugConfig();
                 }
 
-                int debugStart = y;
+                int llmDebugStart = y;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.debug_log_llm_request_text_stats"),
+                        () -> debug.log_llm_request_text_stats,
+                        value -> debug.log_llm_request_text_stats = value
+                );
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.llm_requests"), x, width, llmDebugStart, y);
+
+                y += GROUP_GAP;
+                int itemDebugStart = y;
                 toggleAdder.add(x, y, width, translator.t("label.item_dev_enabled"), () -> item.debug.enabled, value -> item.debug.enabled = value);
                 y += ROW_STEP;
                 toggleAdder.add(
@@ -315,7 +333,7 @@ public final class ConfigSectionContentSupport {
                         value -> item.debug.log_cache_migration = value
                 );
                 y += ROW_STEP;
-                addGroupBox(groupBoxAdder, translator.t("group.basic"), x, width, debugStart, y);
+                addGroupBox(groupBoxAdder, translator.t("group.item_debug"), x, width, itemDebugStart, y);
                 return y;
             }
             case SCOREBOARD -> {

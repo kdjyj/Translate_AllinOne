@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 public class LLM {
@@ -42,27 +43,63 @@ public class LLM {
      * @return 包含完整响应字符串的 CompletableFuture
      */
     public CompletableFuture<String> getCompletion(List<OpenAIRequest.Message> messages) {
+        return getCompletion(messages, null);
+    }
+
+    public CompletableFuture<String> getCompletion(List<OpenAIRequest.Message> messages, String requestContext) {
         if (openAIClient != null) {
             boolean structuredOutputEnabled = settings.openAISettings().enableStructuredOutputIfAvailable();
 
             if (useResponsesApi()) {
-                CompletionSupplier primaryCall = () -> openAIClient.getResponsesCompletion(
-                        buildOpenAIResponsesRequest(messages, false, structuredOutputEnabled)
+                CompletionSupplier primaryCall = instrumentCompletionSupplier(
+                        "openai_responses",
+                        requestContext,
+                        messages,
+                        false,
+                        structuredOutputEnabled,
+                        "primary",
+                        () -> openAIClient.getResponsesCompletion(
+                                buildOpenAIResponsesRequest(messages, false, structuredOutputEnabled)
+                        )
                 );
-                CompletionSupplier fallbackCall = () -> openAIClient.getResponsesCompletion(
-                        buildOpenAIResponsesRequest(messages, false, false)
+                CompletionSupplier fallbackCall = instrumentCompletionSupplier(
+                        "openai_responses",
+                        requestContext,
+                        messages,
+                        false,
+                        false,
+                        "fallback_no_structured_output",
+                        () -> openAIClient.getResponsesCompletion(
+                                buildOpenAIResponsesRequest(messages, false, false)
+                        )
                 );
                 CompletionSupplier primary = () -> withInternalPostprocessRetry(primaryCall, "OpenAI Responses");
                 CompletionSupplier fallback = () -> withInternalPostprocessRetry(fallbackCall, "OpenAI Responses");
                 return withStructuredOutputFallback(structuredOutputEnabled, primary, fallback, "OpenAI Responses");
             }
 
-            CompletionSupplier primaryCall = () -> openAIClient.getChatCompletion(
-                    buildOpenAIRequest(messages, false, structuredOutputEnabled)
-            ).thenApply(response -> response.choices.get(0).message.content);
-            CompletionSupplier fallbackCall = () -> openAIClient.getChatCompletion(
-                    buildOpenAIRequest(messages, false, false)
-            ).thenApply(response -> response.choices.get(0).message.content);
+            CompletionSupplier primaryCall = instrumentCompletionSupplier(
+                    "openai_chat",
+                    requestContext,
+                    messages,
+                    false,
+                    structuredOutputEnabled,
+                    "primary",
+                    () -> openAIClient.getChatCompletion(
+                            buildOpenAIRequest(messages, false, structuredOutputEnabled)
+                    ).thenApply(response -> response.choices.get(0).message.content)
+            );
+            CompletionSupplier fallbackCall = instrumentCompletionSupplier(
+                    "openai_chat",
+                    requestContext,
+                    messages,
+                    false,
+                    false,
+                    "fallback_no_structured_output",
+                    () -> openAIClient.getChatCompletion(
+                            buildOpenAIRequest(messages, false, false)
+                    ).thenApply(response -> response.choices.get(0).message.content)
+            );
             CompletionSupplier primary = () -> withInternalPostprocessRetry(primaryCall, "OpenAI");
             CompletionSupplier fallback = () -> withInternalPostprocessRetry(fallbackCall, "OpenAI");
             return withStructuredOutputFallback(structuredOutputEnabled, primary, fallback, "OpenAI");
@@ -70,12 +107,28 @@ public class LLM {
 
         if (ollamaClient != null) {
             boolean structuredOutputEnabled = settings.ollamaSettings().enableStructuredOutputIfAvailable();
-            CompletionSupplier primaryCall = () -> ollamaClient.getChatCompletion(
-                    buildOllamaRequest(messages, false, structuredOutputEnabled)
-            ).thenApply(response -> response.message.content);
-            CompletionSupplier fallbackCall = () -> ollamaClient.getChatCompletion(
-                    buildOllamaRequest(messages, false, false)
-            ).thenApply(response -> response.message.content);
+            CompletionSupplier primaryCall = instrumentCompletionSupplier(
+                    "ollama_chat",
+                    requestContext,
+                    messages,
+                    false,
+                    structuredOutputEnabled,
+                    "primary",
+                    () -> ollamaClient.getChatCompletion(
+                            buildOllamaRequest(messages, false, structuredOutputEnabled)
+                    ).thenApply(response -> response.message.content)
+            );
+            CompletionSupplier fallbackCall = instrumentCompletionSupplier(
+                    "ollama_chat",
+                    requestContext,
+                    messages,
+                    false,
+                    false,
+                    "fallback_no_structured_output",
+                    () -> ollamaClient.getChatCompletion(
+                            buildOllamaRequest(messages, false, false)
+                    ).thenApply(response -> response.message.content)
+            );
             CompletionSupplier primary = () -> withInternalPostprocessRetry(primaryCall, "Ollama");
             CompletionSupplier fallback = () -> withInternalPostprocessRetry(fallbackCall, "Ollama");
             return withStructuredOutputFallback(structuredOutputEnabled, primary, fallback, "Ollama");
@@ -94,20 +147,40 @@ public class LLM {
      * @return 包含响应文本块的 Stream
      */
     public Stream<String> getStreamingCompletion(List<OpenAIRequest.Message> messages) {
+        return getStreamingCompletion(messages, null);
+    }
+
+    public Stream<String> getStreamingCompletion(List<OpenAIRequest.Message> messages, String requestContext) {
         if (openAIClient != null) {
             boolean structuredOutputEnabled = settings.openAISettings().enableStructuredOutputIfAvailable();
 
             if (useResponsesApi()) {
                 try {
-                    return openAIClient.getStreamingResponsesCompletion(
-                            buildOpenAIResponsesRequest(messages, true, structuredOutputEnabled)
+                    return executeStreamingSupplier(
+                            "openai_responses",
+                            requestContext,
+                            messages,
+                            true,
+                            structuredOutputEnabled,
+                            "primary",
+                            () -> openAIClient.getStreamingResponsesCompletion(
+                                    buildOpenAIResponsesRequest(messages, true, structuredOutputEnabled)
+                            )
                     );
                 } catch (RuntimeException e) {
                     Throwable rootCause = unwrapCompletionThrowable(e);
                     if (structuredOutputEnabled && isStructuredOutputUnsupported(rootCause)) {
                         Translate_AllinOne.LOGGER.warn("OpenAI Responses structured output unsupported in streaming mode, retrying without it: {}", rootCause.getMessage());
-                        return openAIClient.getStreamingResponsesCompletion(
-                                buildOpenAIResponsesRequest(messages, true, false)
+                        return executeStreamingSupplier(
+                                "openai_responses",
+                                requestContext,
+                                messages,
+                                true,
+                                false,
+                                "fallback_no_structured_output",
+                                () -> openAIClient.getStreamingResponsesCompletion(
+                                        buildOpenAIResponsesRequest(messages, true, false)
+                                )
                         );
                     }
                     throw e;
@@ -115,18 +188,32 @@ public class LLM {
             }
 
             try {
-                return openAIClient.getStreamingChatCompletion(
-                                buildOpenAIRequest(messages, true, structuredOutputEnabled)
-                        )
-                        .map(chunk -> chunk.choices.get(0).delta.content);
+                return executeStreamingSupplier(
+                                "openai_chat",
+                                requestContext,
+                                messages,
+                                true,
+                                structuredOutputEnabled,
+                                "primary",
+                                () -> openAIClient.getStreamingChatCompletion(
+                                        buildOpenAIRequest(messages, true, structuredOutputEnabled)
+                                ).map(chunk -> chunk.choices.get(0).delta.content)
+                        );
             } catch (RuntimeException e) {
                 Throwable rootCause = unwrapCompletionThrowable(e);
                 if (structuredOutputEnabled && isStructuredOutputUnsupported(rootCause)) {
                     Translate_AllinOne.LOGGER.warn("OpenAI structured output unsupported in streaming mode, retrying without it: {}", rootCause.getMessage());
-                    return openAIClient.getStreamingChatCompletion(
-                                    buildOpenAIRequest(messages, true, false)
-                            )
-                            .map(chunk -> chunk.choices.get(0).delta.content);
+                    return executeStreamingSupplier(
+                                    "openai_chat",
+                                    requestContext,
+                                    messages,
+                                    true,
+                                    false,
+                                    "fallback_no_structured_output",
+                                    () -> openAIClient.getStreamingChatCompletion(
+                                            buildOpenAIRequest(messages, true, false)
+                                    ).map(chunk -> chunk.choices.get(0).delta.content)
+                            );
                 }
                 throw e;
             }
@@ -135,18 +222,32 @@ public class LLM {
         if (ollamaClient != null) {
             boolean structuredOutputEnabled = settings.ollamaSettings().enableStructuredOutputIfAvailable();
             try {
-                return ollamaClient.getStreamingChatCompletion(
-                                buildOllamaRequest(messages, true, structuredOutputEnabled)
-                        )
-                        .map(chunk -> chunk.message.content);
+                return executeStreamingSupplier(
+                                "ollama_chat",
+                                requestContext,
+                                messages,
+                                true,
+                                structuredOutputEnabled,
+                                "primary",
+                                () -> ollamaClient.getStreamingChatCompletion(
+                                        buildOllamaRequest(messages, true, structuredOutputEnabled)
+                                ).map(chunk -> chunk.message.content)
+                        );
             } catch (RuntimeException e) {
                 Throwable rootCause = unwrapCompletionThrowable(e);
                 if (structuredOutputEnabled && isStructuredOutputUnsupported(rootCause)) {
                     Translate_AllinOne.LOGGER.warn("Ollama structured output unsupported in streaming mode, retrying without it: {}", rootCause.getMessage());
-                    return ollamaClient.getStreamingChatCompletion(
-                                    buildOllamaRequest(messages, true, false)
-                            )
-                            .map(chunk -> chunk.message.content);
+                    return executeStreamingSupplier(
+                                    "ollama_chat",
+                                    requestContext,
+                                    messages,
+                                    true,
+                                    false,
+                                    "fallback_no_structured_output",
+                                    () -> ollamaClient.getStreamingChatCompletion(
+                                            buildOllamaRequest(messages, true, false)
+                                    ).map(chunk -> chunk.message.content)
+                            );
                 }
                 throw e;
             }
@@ -321,8 +422,61 @@ public class LLM {
                 || message.contains("translation failed due to internal error");
     }
 
+    private CompletionSupplier instrumentCompletionSupplier(
+            String api,
+            String requestContext,
+            List<OpenAIRequest.Message> messages,
+            boolean streaming,
+            boolean structuredOutputEnabled,
+            String dispatchReason,
+            CompletionSupplier delegate
+    ) {
+        AtomicInteger sendAttemptCounter = new AtomicInteger(0);
+        return () -> {
+            int sendAttempt = sendAttemptCounter.incrementAndGet();
+            LlmRequestDebugLogger.logIfEnabled(
+                    api,
+                    settings,
+                    messages,
+                    streaming,
+                    structuredOutputEnabled,
+                    dispatchReason,
+                    sendAttempt,
+                    requestContext
+            );
+            return delegate.get();
+        };
+    }
+
+    private Stream<String> executeStreamingSupplier(
+            String api,
+            String requestContext,
+            List<OpenAIRequest.Message> messages,
+            boolean streaming,
+            boolean structuredOutputEnabled,
+            String dispatchReason,
+            StreamingSupplier delegate
+    ) {
+        LlmRequestDebugLogger.logIfEnabled(
+                api,
+                settings,
+                messages,
+                streaming,
+                structuredOutputEnabled,
+                dispatchReason,
+                1,
+                requestContext
+        );
+        return delegate.get();
+    }
+
     @FunctionalInterface
     private interface CompletionSupplier {
         CompletableFuture<String> get();
+    }
+
+    @FunctionalInterface
+    private interface StreamingSupplier {
+        Stream<String> get();
     }
 }

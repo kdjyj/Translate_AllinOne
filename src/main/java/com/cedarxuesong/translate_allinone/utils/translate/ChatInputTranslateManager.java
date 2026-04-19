@@ -187,7 +187,7 @@ public class ChatInputTranslateManager {
 
                     MinecraftClient.getInstance().execute(() -> chatField.setText("Connecting...")); // Clear field for streaming
 
-                    llm.getStreamingCompletion(apiMessages).forEach(chunk -> {
+                    llm.getStreamingCompletion(apiMessages, requestContext).forEach(chunk -> {
                         rawResponseBuffer.append(chunk);
 
                         while (true) {
@@ -242,7 +242,7 @@ public class ChatInputTranslateManager {
                     });
                 } else {
                     MinecraftClient.getInstance().execute(() -> chatField.setText("Translating..."));
-                    String result = llm.getCompletion(apiMessages).join();
+                    String result = llm.getCompletion(apiMessages, requestContext).join();
                     final String finalTranslation = result.stripLeading();
                     MinecraftClient.getInstance().execute(() -> {
                         chatField.setText(finalTranslation);

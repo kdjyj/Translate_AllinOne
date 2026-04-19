@@ -211,7 +211,7 @@ public class ScoreboardTranslateManager {
         );
         String requestContext = buildRequestContext(providerProfile, config.target_language, originalTexts, messages);
 
-        llm.getCompletion(messages).whenComplete((response, error) -> {
+        llm.getCompletion(messages, requestContext).whenComplete((response, error) -> {
             if (!isSessionActive(batchSessionEpoch)) {
                 cache.releaseInProgress(new java.util.HashSet<>(originalTexts));
                 Translate_AllinOne.LOGGER.debug(

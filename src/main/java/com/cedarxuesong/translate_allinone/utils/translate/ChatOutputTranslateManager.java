@@ -166,7 +166,7 @@ public class ChatOutputTranslateManager {
                     final StringBuilder visibleContentBuffer = new StringBuilder();
                     final AtomicBoolean inThinkTag = new AtomicBoolean(false);
 
-                    llm.getStreamingCompletion(apiMessages).forEach(chunk -> {
+                    llm.getStreamingCompletion(apiMessages, requestContext).forEach(chunk -> {
                         rawResponseBuffer.append(chunk);
 
                         while (true) {
@@ -208,7 +208,7 @@ public class ChatOutputTranslateManager {
                     Text finalStyledText = StylePreserver.reapplyStylesFromTags(visibleContentBuffer.toString().stripLeading(), styleMap);
                     updateChatLineWithFinalText(messageId, finalStyledText);
                 } else {
-                    String result = llm.getCompletion(apiMessages).join();
+                    String result = llm.getCompletion(apiMessages, requestContext).join();
                     LOGGER.info("Finished translation for message ID: {}. Result: {}", messageId, result);
                     final String finalTranslation = result.stripLeading();
                     Text finalStyledText = StylePreserver.reapplyStylesFromTags(finalTranslation, styleMap);
