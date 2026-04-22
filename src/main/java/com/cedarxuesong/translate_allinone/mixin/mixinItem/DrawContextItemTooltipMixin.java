@@ -70,6 +70,7 @@ public abstract class DrawContextItemTooltipMixin {
         if (useWynnmodTooltipTracking) {
             TooltipTranslationContext.rememberRecentTranslatedTooltip(
                     mirroredTooltip != originalTooltip
+                            && TooltipTranslationSupport.canRememberRecentTranslatedTooltip(mirroredTooltip)
                             ? TooltipTranslationSupport.stripInternalGeneratedLines(mirroredTooltip)
                             : null
             );

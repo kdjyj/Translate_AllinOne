@@ -380,6 +380,19 @@ public final class TooltipTranslationSupport {
         return sanitized == null ? tooltip : sanitized;
     }
 
+    public static boolean canRememberRecentTranslatedTooltip(List<Text> tooltip) {
+        if (tooltip == null || tooltip.isEmpty()) {
+            return false;
+        }
+
+        for (Text line : tooltip) {
+            if (isInternalGeneratedLine(line)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean looksLikeDedicatedWynnmodTooltip(List<Text> tooltip) {
         if (tooltip == null || tooltip.isEmpty()) {
             return false;

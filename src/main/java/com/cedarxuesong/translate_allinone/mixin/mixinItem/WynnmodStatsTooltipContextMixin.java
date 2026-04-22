@@ -95,7 +95,9 @@ public abstract class WynnmodStatsTooltipContextMixin {
             );
             if (translate_allinone$setTooltipText(event, translatedTooltip)) {
                 TooltipTranslationContext.rememberRecentTranslatedTooltip(
-                        TooltipTranslationSupport.stripInternalGeneratedLines(translatedTooltip)
+                        TooltipTranslationSupport.canRememberRecentTranslatedTooltip(translatedTooltip)
+                                ? TooltipTranslationSupport.stripInternalGeneratedLines(translatedTooltip)
+                                : null
                 );
                 TooltipTranslationContext.setSkipDrawContextTranslation(true);
             }
