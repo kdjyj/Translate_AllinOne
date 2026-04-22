@@ -73,8 +73,8 @@ public final class TooltipTranslationSupport {
             return new TranslatedTooltipBuildResult(tooltip, false);
         }
 
-        boolean wynnCompatibilityEnabled = config.wynn_item_compatibility;
-        TooltipPlan tooltipPlan = TooltipRoutePlanner.planTooltip(tooltip, config, wynnCompatibilityEnabled);
+        boolean decorativeTooltipContext = TooltipDecorativeContextSupport.isDecorativeTooltipContext(tooltip);
+        TooltipPlan tooltipPlan = TooltipRoutePlanner.planTooltip(tooltip, config, decorativeTooltipContext);
         TooltipRefreshNoticeSupport.maybeForceRefreshCurrentTooltip(tooltipPlan.translationTemplateKeys(), config);
         boolean showRefreshNotice = TooltipRefreshNoticeSupport.shouldShowRefreshNotice(tooltipPlan.translationTemplateKeys());
 
@@ -94,7 +94,7 @@ public final class TooltipTranslationSupport {
             TooltipProcessingResult processedTooltip = processTooltipPlan(
                     tooltipPlan,
                     config,
-                    wynnCompatibilityEnabled,
+                    decorativeTooltipContext,
                     emitDevLog,
                     "screen-mirror"
             );

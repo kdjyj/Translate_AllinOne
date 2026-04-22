@@ -89,8 +89,7 @@ public class ConfigManager {
             boolean shouldRewriteConfig = parsedConfig == null;
             ModConfig loadedConfig = normalizeConfig(parsedConfig);
             boolean migratedLegacyItemDebugConfig = migrateLegacyItemDebugConfig(rawConfig, loadedConfig);
-            boolean migratedLegacyItemWynnCompatibilityConfig = ConfigMigrationSupport.migrateLegacyItemWynnCompatibilityConfig(rawConfig, loadedConfig);
-            ConfigMigrationSupport.syncDerivedConfigState(loadedConfig);
+            boolean migratedLegacyItemWynnCompatibilityConfig = ConfigMigrationSupport.hasDeprecatedWynnItemCompatibilityConfig(rawConfig);
             loadedConfig = normalizeConfig(loadedConfig);
 
             if (shouldRewriteConfig) {
@@ -209,7 +208,7 @@ public class ConfigManager {
         if (configToUse.itemTranslate.debug == null) {
             configToUse.itemTranslate.debug = new ItemTranslateConfig.DebugConfig();
         }
-        configToUse.itemTranslate.wynn_item_compatibility = configToUse.wynnCraft.wynn_item_compatibility;
+
         if (configToUse.scoreboardTranslate.keybinding == null) {
             configToUse.scoreboardTranslate.keybinding = new ScoreboardConfig.KeybindingConfig();
         }

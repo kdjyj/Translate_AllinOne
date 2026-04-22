@@ -25,10 +25,11 @@ public final class TooltipRefreshNoticeSupport {
     }
 
     public static void maybeForceRefreshCurrentTooltip(List<Text> tooltip, ItemTranslateConfig config) {
+        boolean decorativeTooltipContext = TooltipDecorativeContextSupport.isDecorativeTooltipContext(tooltip);
         Set<String> keysToRefresh = TooltipRoutePlanner.planTooltip(
                 tooltip,
                 config,
-                config != null && config.wynn_item_compatibility
+                decorativeTooltipContext
         ).translationTemplateKeys();
         maybeForceRefreshCurrentTooltip(keysToRefresh, config);
     }
@@ -65,10 +66,11 @@ public final class TooltipRefreshNoticeSupport {
     }
 
     public static boolean shouldShowRefreshNotice(List<Text> tooltip, ItemTranslateConfig config) {
+        boolean decorativeTooltipContext = TooltipDecorativeContextSupport.isDecorativeTooltipContext(tooltip);
         Set<String> keys = TooltipRoutePlanner.planTooltip(
                 tooltip,
                 config,
-                config != null && config.wynn_item_compatibility
+                decorativeTooltipContext
         ).translationTemplateKeys();
         return shouldShowRefreshNotice(keys);
     }

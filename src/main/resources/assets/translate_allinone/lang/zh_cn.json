@@ -250,7 +250,7 @@
   "text.translate_allinone.configscreen.label.chat_interaction_offset_fix": "修复聊天翻译互动偏移",
   "text.translate_allinone.configscreen.label.translate_item_name": "翻译物品名称",
   "text.translate_allinone.configscreen.label.translate_item_lore": "翻译物品简介",
-  "text.translate_allinone.configscreen.label.wynn_item_compatibility": "Wynn 物品兼容",
+
   "text.translate_allinone.configscreen.label.translate_wynntils_task_tracker_title": "翻译任务标题",
   "text.translate_allinone.configscreen.label.translate_wynntils_task_tracker_description": "翻译任务描述",
   "text.translate_allinone.configscreen.label.wynntils_task_tracker_dev_enabled": "启用 Wynntils任务追踪调试",

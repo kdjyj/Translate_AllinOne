@@ -16,13 +16,13 @@ final class TooltipTitleLineHeuristics {
     static TitleLineEvaluation evaluateLine(
             Text line,
             boolean nameSlotAvailable,
-            boolean wynnCompatibilityEnabled,
+            boolean decorativeTooltipContext,
             String firstTitleComparisonText
     ) {
-        boolean hasMeaningfulContent = TooltipTextMatcherSupport.hasMeaningfulContent(line, wynnCompatibilityEnabled);
+        boolean hasMeaningfulContent = TooltipTextMatcherSupport.hasMeaningfulContent(line, decorativeTooltipContext);
         boolean consumesNameSlot = nameSlotAvailable && hasMeaningfulContent;
         boolean duplicateWynnTitleLine = !nameSlotAvailable
-                && wynnCompatibilityEnabled
+                && decorativeTooltipContext
                 && hasMeaningfulContent
                 && looksLikeDuplicateWynnTitleLine(line, firstTitleComparisonText);
         boolean firstContentLine = consumesNameSlot || duplicateWynnTitleLine;

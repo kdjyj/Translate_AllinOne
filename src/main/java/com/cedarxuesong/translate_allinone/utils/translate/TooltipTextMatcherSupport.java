@@ -74,6 +74,15 @@ public final class TooltipTextMatcherSupport {
     }
 
     public static TooltipLineDecision evaluateTooltipLine(Text line, boolean isFirstContentLine, ItemTranslateConfig config) {
+        return evaluateTooltipLine(line, isFirstContentLine, config, false);
+    }
+
+    public static TooltipLineDecision evaluateTooltipLine(
+            Text line,
+            boolean isFirstContentLine,
+            ItemTranslateConfig config,
+            boolean decorativeTooltipContext
+    ) {
         if (line == null || config == null || TooltipInternalLineSupport.isInternalGeneratedLine(line)) {
             return new TooltipLineDecision(
                     TooltipLineKind.INTERNAL_OR_NULL,
@@ -117,9 +126,7 @@ public final class TooltipTextMatcherSupport {
             );
         }
 
-        boolean wynnCompatibilityEnabled = config.wynn_item_compatibility;
-
-        if (!wynnCompatibilityEnabled && isNamespacedIdentifier(rawText)) {
+        if (!decorativeTooltipContext && isNamespacedIdentifier(rawText)) {
             return new TooltipLineDecision(
                     TooltipLineKind.NAMESPACE_IDENTIFIER,
                     false,
@@ -132,7 +139,7 @@ public final class TooltipTextMatcherSupport {
             );
         }
 
-        if (!wynnCompatibilityEnabled && isGenericIdentifier(rawText)) {
+        if (!decorativeTooltipContext && isGenericIdentifier(rawText)) {
             return new TooltipLineDecision(
                     TooltipLineKind.IDENTIFIER_LIKE,
                     false,
@@ -145,7 +152,7 @@ public final class TooltipTextMatcherSupport {
             );
         }
 
-        if (!wynnCompatibilityEnabled && isBareInternalIdentifier(rawText)) {
+        if (!decorativeTooltipContext && isBareInternalIdentifier(rawText)) {
             return new TooltipLineDecision(
                     TooltipLineKind.IDENTIFIER_LIKE,
                     false,
@@ -179,8 +186,8 @@ public final class TooltipTextMatcherSupport {
                     true,
                     isFirstContentLine,
                     rawText,
-                    wynnCompatibilityEnabled
-                            ? "Matched letter-bearing plain text node under Wynn compatibility"
+                    decorativeTooltipContext
+                            ? "Matched letter-bearing plain text node in decorative tooltip context"
                             : "Matched human-readable plain text node",
                     "textual-content",
                     summarizeMatchedBranches(textualContentMatch)
@@ -230,12 +237,11 @@ public final class TooltipTextMatcherSupport {
         return hasMeaningfulContent(line, false);
     }
 
-    public static boolean hasMeaningfulContent(Text line, boolean wynnCompatibilityEnabled) {
+    public static boolean hasMeaningfulContent(Text line, boolean decorativeTooltipContext) {
         ItemTranslateConfig config = new ItemTranslateConfig();
         config.enabled_translate_item_custom_name = true;
         config.enabled_translate_item_lore = true;
-        config.wynn_item_compatibility = wynnCompatibilityEnabled;
-        TooltipLineDecision decision = evaluateTooltipLine(line, true, config);
+        TooltipLineDecision decision = evaluateTooltipLine(line, true, config, decorativeTooltipContext);
         return decision.kind() == TooltipLineKind.TRANSLATABLE_CONTENT
                 || decision.kind() == TooltipLineKind.HUMAN_READABLE_TEXT;
     }

@@ -486,22 +486,7 @@ public final class ConfigSectionContentSupport {
                     wynnCraft.wynntils_task_tracker.keybinding.refreshBinding = new InputBindingConfig();
                 }
 
-                int compatibilityStart = y;
-                toggleAdder.add(
-                        x,
-                        y,
-                        width,
-                        translator.t("label.wynn_item_compatibility"),
-                        () -> wynnCraft.wynn_item_compatibility,
-                        value -> {
-                            wynnCraft.wynn_item_compatibility = value;
-                            config.itemTranslate.wynn_item_compatibility = value;
-                        }
-                );
-                y += ROW_STEP;
-                addGroupBox(groupBoxAdder, translator.t("group.wynncraft"), x, width, compatibilityStart, y);
 
-                y += GROUP_GAP;
                 int trackerStart = y;
                 toggleAdder.add(
                         x,

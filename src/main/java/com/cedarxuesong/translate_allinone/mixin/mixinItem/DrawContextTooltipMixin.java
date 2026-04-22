@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.Translate_AllinOne;
 import com.cedarxuesong.translate_allinone.utils.cache.ItemTemplateCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
 import com.cedarxuesong.translate_allinone.utils.input.KeybindingManager;
+import com.cedarxuesong.translate_allinone.utils.translate.TooltipDecorativeContextSupport;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipInternalLineSupport;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipRefreshNoticeSupport;
 import com.cedarxuesong.translate_allinone.utils.translate.TooltipTextMatcherSupport;
@@ -169,10 +170,11 @@ public abstract class DrawContextTooltipMixin {
             sourceLines.add(orderedLine.text());
         }
 
+        boolean decorativeTooltipContext = TooltipDecorativeContextSupport.isDecorativeTooltipContext(sourceLines);
         TooltipTranslationSupport.TooltipProcessingResult processedTooltip = TooltipTranslationSupport.processTooltipLines(
                 sourceLines,
                 config,
-                config.wynn_item_compatibility,
+                decorativeTooltipContext,
                 emitDevLog,
                 "draw-context"
         );

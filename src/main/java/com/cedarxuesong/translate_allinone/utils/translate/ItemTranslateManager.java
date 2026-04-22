@@ -721,13 +721,12 @@ public class ItemTranslateManager {
             return;
         }
         Translate_AllinOne.LOGGER.info(
-                "[ItemDev:session] phase={} epoch={} enabled={} customName={} lore={} wynnCompat={} target={} configuredConcurrent={} activeWorkers={} maxBatchSize={} requestsPerMinute={} debugEnabled={} logBatchTiming={} queue={}",
+                "[ItemDev:session] phase={} epoch={} enabled={} customName={} lore={} target={} configuredConcurrent={} activeWorkers={} maxBatchSize={} requestsPerMinute={} debugEnabled={} logBatchTiming={} queue={}",
                 phase,
                 epoch,
                 config.enabled,
                 config.enabled_translate_item_custom_name,
                 config.enabled_translate_item_lore,
-                config.wynn_item_compatibility,
                 config.target_language,
                 config.max_concurrent_requests,
                 currentConcurrentRequests > 0 ? currentConcurrentRequests : Math.max(1, config.max_concurrent_requests),

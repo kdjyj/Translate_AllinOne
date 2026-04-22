@@ -254,7 +254,7 @@
   "text.translate_allinone.configscreen.label.chat_interaction_offset_fix": "Fix Chat Translate Interaction Offset",
   "text.translate_allinone.configscreen.label.translate_item_name": "Translate Item Name",
   "text.translate_allinone.configscreen.label.translate_item_lore": "Translate Item Lore",
-  "text.translate_allinone.configscreen.label.wynn_item_compatibility": "Wynn Item Compatibility",
+
   "text.translate_allinone.configscreen.label.translate_wynntils_task_tracker_title": "Translate Task Title",
   "text.translate_allinone.configscreen.label.translate_wynntils_task_tracker_description": "Translate Task Description",
   "text.translate_allinone.configscreen.label.wynntils_task_tracker_dev_enabled": "Enable Wynntils Task Tracker Debug",

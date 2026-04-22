@@ -157,7 +157,6 @@ public abstract class WynnmodStatsTooltipContextMixin {
         ItemTranslateConfig config = Translate_AllinOne.getConfig().itemTranslate;
         return config != null
                 && config.enabled
-                && config.wynn_item_compatibility
                 && FabricLoader.getInstance().isModLoaded("wynnmod");
     }
 

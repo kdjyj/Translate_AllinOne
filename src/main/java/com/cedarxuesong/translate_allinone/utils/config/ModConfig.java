@@ -26,8 +26,4 @@ public class ModConfig {
     public DebugConfig debug = new DebugConfig();
 
     public ProviderManagerConfig providerManager = new ProviderManagerConfig();
-
-    public boolean isWynnItemCompatibilityEnabled() {
-        return wynnCraft != null && wynnCraft.wynn_item_compatibility;
-    }
 }

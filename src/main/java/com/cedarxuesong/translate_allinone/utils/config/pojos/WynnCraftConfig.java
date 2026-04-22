@@ -3,7 +3,6 @@ package com.cedarxuesong.translate_allinone.utils.config.pojos;
 import com.google.gson.annotations.SerializedName;
 
 public class WynnCraftConfig {
-    public boolean wynn_item_compatibility = false;
     public WynntilsTaskTrackerConfig wynntils_task_tracker = new WynntilsTaskTrackerConfig();
 
     public static class WynntilsTaskTrackerConfig {

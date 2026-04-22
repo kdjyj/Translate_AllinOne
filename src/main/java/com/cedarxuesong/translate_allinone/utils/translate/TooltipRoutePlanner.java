@@ -63,7 +63,9 @@ final class TooltipRoutePlanner {
             return new TooltipPlan(List.of(), List.of(), Collections.emptySet());
         }
 
-        List<TooltipLineCandidate> candidates = evaluateTooltipLines(tooltip, config);
+        boolean decorativeTooltipContext = useTagStylePreservation
+                || TooltipDecorativeContextSupport.isDecorativeTooltipContext(tooltip);
+        List<TooltipLineCandidate> candidates = evaluateTooltipLines(tooltip, config, decorativeTooltipContext);
         List<TooltipRouteSegment> segments = new ArrayList<>(candidates.size());
         LinkedHashSet<String> allTranslationTemplateKeys = new LinkedHashSet<>();
 
@@ -183,10 +185,13 @@ final class TooltipRoutePlanner {
                 .trim();
     }
 
-    private static List<TooltipLineCandidate> evaluateTooltipLines(List<Text> tooltip, ItemTranslateConfig config) {
+    private static List<TooltipLineCandidate> evaluateTooltipLines(
+            List<Text> tooltip,
+            ItemTranslateConfig config,
+            boolean decorativeTooltipContext
+    ) {
         List<TooltipLineCandidate> candidates = new ArrayList<>(tooltip.size());
         boolean nameSlotAvailable = true;
-        boolean wynnCompatibilityEnabled = config != null && config.wynn_item_compatibility;
         String firstTitleComparisonText = "";
 
         for (int lineIndex = 0; lineIndex < tooltip.size(); lineIndex++) {
@@ -205,11 +210,16 @@ final class TooltipRoutePlanner {
                     TooltipTitleLineHeuristics.evaluateLine(
                             line,
                             nameSlotAvailable,
-                            wynnCompatibilityEnabled,
+                            decorativeTooltipContext,
                             firstTitleComparisonText
                     );
             TooltipTextMatcherSupport.TooltipLineDecision decision =
-                    TooltipTextMatcherSupport.evaluateTooltipLine(line, titleLineEvaluation.firstContentLine(), config);
+                    TooltipTextMatcherSupport.evaluateTooltipLine(
+                            line,
+                            titleLineEvaluation.firstContentLine(),
+                            config,
+                            decorativeTooltipContext
+                    );
             candidates.add(new TooltipLineCandidate(
                     lineIndex,
                     line,
