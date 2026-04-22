@@ -71,12 +71,12 @@ public class ItemTemplateCache {
             Charset sourceCharset
     ) {}
 
-    private static final ItemTemplateCache INSTANCE = new ItemTemplateCache();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CACHE_FILE_NAME = "item_translate_cache.json";
     private static final Charset CACHE_CHARSET = StandardCharsets.UTF_8;
     private static final long SAVE_DEBOUNCE_MILLIS = 1500L;
     private final Path cacheFilePath;
+    private final boolean passiveBackupEnabled;
     private final Map<String, String> templateCache = new ConcurrentHashMap<>();
     private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
     private final LinkedBlockingDeque<String> pendingQueue = new LinkedBlockingDeque<>();
@@ -93,21 +93,33 @@ public class ItemTemplateCache {
     private volatile boolean saveScheduled = false;
 
     private ItemTemplateCache() {
-        this.cacheFilePath = FabricLoader.getInstance().getConfigDir()
-                .resolve(Translate_AllinOne.MOD_ID)
-                .resolve(CACHE_FILE_NAME);
+        this(resolveDefaultCachePath(), true);
+    }
+
+    ItemTemplateCache(Path cacheFilePath) {
+        this(cacheFilePath, false);
+    }
+
+    ItemTemplateCache(Path cacheFilePath, boolean passiveBackupEnabled) {
+        this.cacheFilePath = cacheFilePath;
+        this.passiveBackupEnabled = passiveBackupEnabled;
     }
 
     public static ItemTemplateCache getInstance() {
-        return INSTANCE;
+        return Holder.INSTANCE;
     }
 
     public synchronized void load() {
-        pendingQueue.clear();
-        inProgress.clear();
-        batchWorkQueue.clear();
-        allQueuedOrInProgressKeys.clear();
-        errorCache.clear();
+        CacheLoadSupport.resetStateForLoad(
+                templateCache,
+                pendingQueue,
+                inProgress,
+                batchWorkQueue,
+                allQueuedOrInProgressKeys,
+                errorCache
+        );
+        isDirty = false;
+        saveScheduled = false;
         boolean shouldRewriteCacheFile = false;
 
         if (Files.exists(cacheFilePath)) {
@@ -142,11 +154,11 @@ public class ItemTemplateCache {
                     shouldRewriteCacheFile = true;
                     Translate_AllinOne.LOGGER.warn(
                             "Loaded item cache using fallback charset {}. It will be rewritten as UTF-8.",
-                            loadedEntries.sourceCharset().displayName()
+                        loadedEntries.sourceCharset().displayName()
                     );
                 }
             } catch (IOException | RuntimeException e) {
-                Translate_AllinOne.LOGGER.error("Failed to load item translation cache. Keeping in-memory entries untouched.", e);
+                Translate_AllinOne.LOGGER.error("Failed to load item translation cache. Using empty in-memory cache for this session.", e);
             }
         } else {
             Translate_AllinOne.LOGGER.info("Item translation cache file not found, a new one will be created upon saving.");
@@ -200,7 +212,9 @@ public class ItemTemplateCache {
 
             long backupStartedAtNanos = System.nanoTime();
             LOGGER.info("Successfully saved {} item translation cache entries.", templateCache.size());
-            CacheBackupManager.maybeBackup(cacheFilePath, "item translation");
+            if (passiveBackupEnabled) {
+                CacheBackupManager.maybeBackup(cacheFilePath, "item translation");
+            }
             long backupElapsedNanos = System.nanoTime() - backupStartedAtNanos;
             isDirty = false;
             lastSaveAtMillis = System.currentTimeMillis();
@@ -519,6 +533,16 @@ public class ItemTemplateCache {
                         + ", removedPending=" + removedPendingCount
                         + ", cacheSize=" + templateCache.size()
         );
+    }
+
+    private static Path resolveDefaultCachePath() {
+        return FabricLoader.getInstance().getConfigDir()
+                .resolve(Translate_AllinOne.MOD_ID)
+                .resolve(CACHE_FILE_NAME);
+    }
+
+    private static final class Holder {
+        private static final ItemTemplateCache INSTANCE = new ItemTemplateCache();
     }
 
     public synchronized int forceRefresh(Iterable<String> originalTemplates) {

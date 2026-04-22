@@ -36,12 +36,12 @@ public final class WynntilsTaskTrackerTextCache {
 
     public record LookupResult(TranslationStatus status, String translation, String errorMessage) {}
 
-    private static final WynntilsTaskTrackerTextCache INSTANCE = new WynntilsTaskTrackerTextCache();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CACHE_FILE_NAME = CACHE_LABEL;
     private static final long SAVE_DEBOUNCE_MILLIS = 1500L;
 
     private final Path cacheFilePath;
+    private final boolean passiveBackupEnabled;
     private final Map<String, String> templateCache = new ConcurrentHashMap<>();
     private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
     private final LinkedBlockingDeque<String> pendingQueue = new LinkedBlockingDeque<>();
@@ -59,23 +59,31 @@ public final class WynntilsTaskTrackerTextCache {
     private volatile boolean saveScheduled = false;
 
     private WynntilsTaskTrackerTextCache() {
-        this.cacheFilePath = FabricLoader.getInstance()
-                .getConfigDir()
-                .resolve(Translate_AllinOne.MOD_ID)
-                .resolve(CACHE_FILE_NAME);
+        this(resolveDefaultCachePath(), true);
+    }
+
+    WynntilsTaskTrackerTextCache(Path cacheFilePath) {
+        this(cacheFilePath, false);
+    }
+
+    WynntilsTaskTrackerTextCache(Path cacheFilePath, boolean passiveBackupEnabled) {
+        this.cacheFilePath = cacheFilePath;
+        this.passiveBackupEnabled = passiveBackupEnabled;
     }
 
     public static WynntilsTaskTrackerTextCache getInstance() {
-        return INSTANCE;
+        return Holder.INSTANCE;
     }
 
     public synchronized void load() {
-        templateCache.clear();
-        pendingQueue.clear();
-        inProgress.clear();
-        batchWorkQueue.clear();
-        allQueuedOrInProgressKeys.clear();
-        errorCache.clear();
+        CacheLoadSupport.resetStateForLoad(
+                templateCache,
+                pendingQueue,
+                inProgress,
+                batchWorkQueue,
+                allQueuedOrInProgressKeys,
+                errorCache
+        );
         isDirty = false;
         saveScheduled = false;
 
@@ -122,7 +130,9 @@ public final class WynntilsTaskTrackerTextCache {
                 Files.move(tempPath, cacheFilePath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            CacheBackupManager.maybeBackup(cacheFilePath, CACHE_LABEL);
+            if (passiveBackupEnabled) {
+                CacheBackupManager.maybeBackup(cacheFilePath, CACHE_LABEL);
+            }
             isDirty = false;
             lastSaveAtMillis = System.currentTimeMillis();
             Translate_AllinOne.LOGGER.info(
@@ -271,5 +281,16 @@ public final class WynntilsTaskTrackerTextCache {
         long delayMillis = Math.max(0L, SAVE_DEBOUNCE_MILLIS - elapsed);
         saveScheduled = true;
         saveExecutor.schedule(this::save, delayMillis, TimeUnit.MILLISECONDS);
+    }
+
+    private static Path resolveDefaultCachePath() {
+        return FabricLoader.getInstance()
+                .getConfigDir()
+                .resolve(Translate_AllinOne.MOD_ID)
+                .resolve(CACHE_FILE_NAME);
+    }
+
+    private static final class Holder {
+        private static final WynntilsTaskTrackerTextCache INSTANCE = new WynntilsTaskTrackerTextCache();
     }
 }

@@ -49,12 +49,12 @@ public class ScoreboardTextCache {
             Charset sourceCharset
     ) {}
 
-    private static final ScoreboardTextCache INSTANCE = new ScoreboardTextCache();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CACHE_FILE_NAME = "scoreboard_translate_cache.json";
     private static final Charset CACHE_CHARSET = StandardCharsets.UTF_8;
     private static final long SAVE_DEBOUNCE_MILLIS = 1500L;
     private final Path cacheFilePath;
+    private final boolean passiveBackupEnabled;
     private final Map<String, String> templateCache = new ConcurrentHashMap<>();
     private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
     private final LinkedBlockingDeque<String> pendingQueue = new LinkedBlockingDeque<>();
@@ -71,9 +71,16 @@ public class ScoreboardTextCache {
     private volatile boolean saveScheduled = false;
 
     private ScoreboardTextCache() {
-        this.cacheFilePath = FabricLoader.getInstance().getConfigDir()
-                .resolve(Translate_AllinOne.MOD_ID)
-                .resolve(CACHE_FILE_NAME);
+        this(resolveDefaultCachePath(), true);
+    }
+
+    ScoreboardTextCache(Path cacheFilePath) {
+        this(cacheFilePath, false);
+    }
+
+    ScoreboardTextCache(Path cacheFilePath, boolean passiveBackupEnabled) {
+        this.cacheFilePath = cacheFilePath;
+        this.passiveBackupEnabled = passiveBackupEnabled;
     }
 
     public void clearPendingAndInProgress() {
@@ -92,15 +99,20 @@ public class ScoreboardTextCache {
     }
 
     public static ScoreboardTextCache getInstance() {
-        return INSTANCE;
+        return Holder.INSTANCE;
     }
 
     public synchronized void load() {
-        pendingQueue.clear();
-        inProgress.clear();
-        batchWorkQueue.clear();
-        allQueuedOrInProgressKeys.clear();
-        errorCache.clear();
+        CacheLoadSupport.resetStateForLoad(
+                templateCache,
+                pendingQueue,
+                inProgress,
+                batchWorkQueue,
+                allQueuedOrInProgressKeys,
+                errorCache
+        );
+        isDirty = false;
+        saveScheduled = false;
         boolean shouldRewriteCacheFile = false;
 
         if (Files.exists(cacheFilePath)) {
@@ -135,11 +147,11 @@ public class ScoreboardTextCache {
                     shouldRewriteCacheFile = true;
                     Translate_AllinOne.LOGGER.warn(
                             "Loaded scoreboard cache using fallback charset {}. It will be rewritten as UTF-8.",
-                            loadedEntries.sourceCharset().displayName()
+                        loadedEntries.sourceCharset().displayName()
                     );
                 }
             } catch (IOException | RuntimeException e) {
-                Translate_AllinOne.LOGGER.error("Failed to load scoreboard translation cache. Keeping in-memory entries untouched.", e);
+                Translate_AllinOne.LOGGER.error("Failed to load scoreboard translation cache. Using empty in-memory cache for this session.", e);
             }
         } else {
             Translate_AllinOne.LOGGER.info("Scoreboard translation cache file not found, a new one will be created upon saving.");
@@ -173,7 +185,9 @@ public class ScoreboardTextCache {
             }
 
             Translate_AllinOne.LOGGER.info("Successfully saved {} scoreboard translation cache entries.", templateCache.size());
-            CacheBackupManager.maybeBackup(cacheFilePath, "scoreboard translation");
+            if (passiveBackupEnabled) {
+                CacheBackupManager.maybeBackup(cacheFilePath, "scoreboard translation");
+            }
             isDirty = false;
             lastSaveAtMillis = System.currentTimeMillis();
         } catch (IOException e) {
@@ -242,6 +256,16 @@ public class ScoreboardTextCache {
             combinedException.addSuppressed(defaultCharsetFailure);
         }
         throw combinedException;
+    }
+
+    private static Path resolveDefaultCachePath() {
+        return FabricLoader.getInstance().getConfigDir()
+                .resolve(Translate_AllinOne.MOD_ID)
+                .resolve(CACHE_FILE_NAME);
+    }
+
+    private static final class Holder {
+        private static final ScoreboardTextCache INSTANCE = new ScoreboardTextCache();
     }
 
     private LoadedEntries chooseBetterEntries(LoadedEntries utf8Entries, LoadedEntries defaultCharsetEntries) {
