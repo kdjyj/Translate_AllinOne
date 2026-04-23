@@ -34,6 +34,8 @@ public final class WynntilsTaskTrackerTextCache {
         NOT_CACHED
     }
 
+    public record CacheStats(int translated, int total) {}
+
     public record LookupResult(TranslationStatus status, String translation, String errorMessage) {}
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -48,15 +50,22 @@ public final class WynntilsTaskTrackerTextCache {
     private final LinkedBlockingQueue<List<String>> batchWorkQueue = new LinkedBlockingQueue<>();
     private final Set<String> allQueuedOrInProgressKeys = ConcurrentHashMap.newKeySet();
     private final Map<String, String> errorCache = new ConcurrentHashMap<>();
+    private final CacheRuntimeStateSupport<String, List<String>> runtimeState = new CacheRuntimeStateSupport<>(
+            templateCache,
+            new CacheKeyQueueSupport<>(
+                    pendingQueue,
+                    inProgress,
+                    batchWorkQueue,
+                    allQueuedOrInProgressKeys,
+                    errorCache
+            )
+    );
+    private final CachePersistenceSupport persistence = new CachePersistenceSupport(SAVE_DEBOUNCE_MILLIS);
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "translate_allinone-" + CACHE_LABEL + "-save");
         thread.setDaemon(true);
         return thread;
     });
-
-    private volatile boolean isDirty = false;
-    private volatile long lastSaveAtMillis = 0L;
-    private volatile boolean saveScheduled = false;
 
     private WynntilsTaskTrackerTextCache() {
         this(resolveDefaultCachePath(), true);
@@ -76,16 +85,8 @@ public final class WynntilsTaskTrackerTextCache {
     }
 
     public synchronized void load() {
-        CacheLoadSupport.resetStateForLoad(
-                templateCache,
-                pendingQueue,
-                inProgress,
-                batchWorkQueue,
-                allQueuedOrInProgressKeys,
-                errorCache
-        );
-        isDirty = false;
-        saveScheduled = false;
+        runtimeState.resetForLoad();
+        persistence.resetForLoad();
 
         if (!Files.exists(cacheFilePath)) {
             Translate_AllinOne.LOGGER.info("{} file not found, a new one will be created upon saving.", CACHE_LABEL);
@@ -98,13 +99,13 @@ public final class WynntilsTaskTrackerTextCache {
             if (loaded != null) {
                 loaded.forEach((key, value) -> {
                     if (key != null && value != null && !value.isEmpty()) {
-                        templateCache.put(key, value);
+                        runtimeState.templateCache().put(key, value);
                     }
                 });
             }
             Translate_AllinOne.LOGGER.info(
                     "Successfully loaded {} {} entries.",
-                    templateCache.size(),
+                    runtimeState.templateCache().size(),
                     CACHE_LABEL);
         } catch (IOException | RuntimeException e) {
             Translate_AllinOne.LOGGER.error("Failed to load {}.", CACHE_LABEL, e);
@@ -112,8 +113,7 @@ public final class WynntilsTaskTrackerTextCache {
     }
 
     public synchronized void save() {
-        saveScheduled = false;
-        if (!isDirty) {
+        if (!persistence.beginSave()) {
             return;
         }
 
@@ -121,7 +121,7 @@ public final class WynntilsTaskTrackerTextCache {
             Files.createDirectories(cacheFilePath.getParent());
             Path tempPath = cacheFilePath.resolveSibling(cacheFilePath.getFileName() + ".tmp");
             try (var writer = Files.newBufferedWriter(tempPath, StandardCharsets.UTF_8)) {
-                GSON.toJson(templateCache, writer);
+                GSON.toJson(runtimeState.templateCache(), writer);
             }
 
             try {
@@ -133,11 +133,10 @@ public final class WynntilsTaskTrackerTextCache {
             if (passiveBackupEnabled) {
                 CacheBackupManager.maybeBackup(cacheFilePath, CACHE_LABEL);
             }
-            isDirty = false;
-            lastSaveAtMillis = System.currentTimeMillis();
+            persistence.finishSave();
             Translate_AllinOne.LOGGER.info(
                     "Successfully saved {} {} entries.",
-                    templateCache.size(),
+                    runtimeState.templateCache().size(),
                     CACHE_LABEL);
         } catch (IOException e) {
             Translate_AllinOne.LOGGER.error("Failed to save {}.", CACHE_LABEL, e);
@@ -148,54 +147,36 @@ public final class WynntilsTaskTrackerTextCache {
         if (originalTemplate == null || originalTemplate.isBlank()) {
             return new LookupResult(TranslationStatus.NOT_CACHED, "", null);
         }
+        return toLookupResult(runtimeState.lookupOrQueue(originalTemplate));
+    }
 
-        String translation = templateCache.get(originalTemplate);
-        if (translation != null && !translation.isEmpty()) {
-            return new LookupResult(TranslationStatus.TRANSLATED, translation, null);
+    public LookupResult peek(String originalTemplate) {
+        if (originalTemplate == null || originalTemplate.isBlank()) {
+            return new LookupResult(TranslationStatus.NOT_CACHED, "", null);
         }
-
-        String errorMessage = errorCache.get(originalTemplate);
-        if (errorMessage != null) {
-            return new LookupResult(TranslationStatus.ERROR, "", errorMessage);
-        }
-
-        if (inProgress.contains(originalTemplate)) {
-            return new LookupResult(TranslationStatus.IN_PROGRESS, "", null);
-        }
-
-        if (allQueuedOrInProgressKeys.add(originalTemplate)) {
-            pendingQueue.offerLast(originalTemplate);
-        }
-
-        return new LookupResult(TranslationStatus.PENDING, "", null);
+        return toLookupResult(runtimeState.peek(originalTemplate));
     }
 
     public List<String> drainAllPendingItems() {
-        List<String> items = new ArrayList<>();
-        pendingQueue.drainTo(items);
-        return items;
+        return runtimeState.queues().drainAllPendingItems();
     }
 
     public void submitBatchForTranslation(List<String> batch) {
         if (batch != null && !batch.isEmpty()) {
-            batchWorkQueue.offer(batch);
+            runtimeState.queues().submitBatch(batch);
         }
     }
 
     public List<String> takeBatchForTranslation() throws InterruptedException {
-        return batchWorkQueue.take();
+        return runtimeState.queues().takeBatch();
     }
 
     public void markAsInProgress(List<String> batch) {
-        inProgress.addAll(batch);
+        runtimeState.queues().markAsInProgress(batch);
     }
 
     public synchronized void releaseInProgress(Set<String> keys) {
-        if (keys == null || keys.isEmpty()) {
-            return;
-        }
-        inProgress.removeAll(keys);
-        allQueuedOrInProgressKeys.removeAll(keys);
+        runtimeState.queues().releaseInProgress(keys);
     }
 
     public synchronized void updateTranslations(Map<String, String> translations) {
@@ -203,13 +184,8 @@ public final class WynntilsTaskTrackerTextCache {
             return;
         }
 
-        templateCache.putAll(translations);
-        Set<String> finishedKeys = new HashSet<>(translations.keySet());
-        inProgress.removeAll(finishedKeys);
-        allQueuedOrInProgressKeys.removeAll(finishedKeys);
-        finishedKeys.forEach(errorCache::remove);
-
-        isDirty = true;
+        runtimeState.updateTranslations(translations);
+        persistence.markDirty();
         scheduleSave();
     }
 
@@ -218,27 +194,16 @@ public final class WynntilsTaskTrackerTextCache {
             return 0;
         }
 
-        int refreshedCount = 0;
+        List<String> refreshKeys = new ArrayList<>();
         for (String originalTemplate : originalTemplates) {
-            if (originalTemplate == null || originalTemplate.isBlank()) {
-                continue;
+            if (originalTemplate != null && !originalTemplate.isBlank()) {
+                refreshKeys.add(originalTemplate);
             }
-
-            templateCache.remove(originalTemplate);
-            errorCache.remove(originalTemplate);
-            inProgress.remove(originalTemplate);
-            allQueuedOrInProgressKeys.remove(originalTemplate);
-            while (pendingQueue.remove(originalTemplate)) {
-                // Remove stale queued copies before pushing this refresh request to the front.
-            }
-
-            allQueuedOrInProgressKeys.add(originalTemplate);
-            pendingQueue.offerFirst(originalTemplate);
-            refreshedCount++;
         }
+        int refreshedCount = runtimeState.forceRefresh(refreshKeys);
 
         if (refreshedCount > 0) {
-            isDirty = true;
+            persistence.markDirty();
             scheduleSave();
         }
 
@@ -246,41 +211,36 @@ public final class WynntilsTaskTrackerTextCache {
     }
 
     public Set<String> getErroredKeys() {
-        return new HashSet<>(errorCache.keySet());
+        return runtimeState.copyErroredKeys();
+    }
+
+    public synchronized CacheStats getCacheStats() {
+        return new CacheStats((int) runtimeState.translatedCount(), runtimeState.totalCount());
     }
 
     public synchronized void requeueFromError(String key) {
         if (key == null || key.isBlank()) {
             return;
         }
-        if (errorCache.remove(key) != null) {
-            allQueuedOrInProgressKeys.add(key);
-            pendingQueue.offerFirst(key);
-        }
+        runtimeState.queues().requeueFromError(key);
     }
 
     public synchronized void requeueFailed(Set<String> failedKeys, String errorMessage) {
         if (failedKeys == null || failedKeys.isEmpty()) {
             return;
         }
-        inProgress.removeAll(failedKeys);
-        failedKeys.forEach(key -> errorCache.put(key, errorMessage == null ? "Unknown translation error" : errorMessage));
+        runtimeState.queues().markErrored(failedKeys, errorMessage, "Unknown translation error");
     }
 
     private synchronized void scheduleSave() {
-        long elapsed = System.currentTimeMillis() - lastSaveAtMillis;
-        if (elapsed >= SAVE_DEBOUNCE_MILLIS) {
+        CachePersistenceSupport.SaveSchedulePlan schedulePlan = persistence.planSave(false);
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SAVE_NOW) {
             save();
             return;
         }
-
-        if (saveScheduled) {
-            return;
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SCHEDULE_ASYNC) {
+            saveExecutor.schedule(this::save, schedulePlan.delayMillis(), TimeUnit.MILLISECONDS);
         }
-
-        long delayMillis = Math.max(0L, SAVE_DEBOUNCE_MILLIS - elapsed);
-        saveScheduled = true;
-        saveExecutor.schedule(this::save, delayMillis, TimeUnit.MILLISECONDS);
     }
 
     private static Path resolveDefaultCachePath() {
@@ -292,5 +252,23 @@ public final class WynntilsTaskTrackerTextCache {
 
     private static final class Holder {
         private static final WynntilsTaskTrackerTextCache INSTANCE = new WynntilsTaskTrackerTextCache();
+    }
+
+    private LookupResult toLookupResult(CacheRuntimeStateSupport.LookupState lookupState) {
+        return new LookupResult(
+                toTranslationStatus(lookupState.status()),
+                lookupState.translation(),
+                lookupState.errorMessage()
+        );
+    }
+
+    private TranslationStatus toTranslationStatus(CacheRuntimeStateSupport.LookupStatus lookupStatus) {
+        return switch (lookupStatus) {
+            case TRANSLATED -> TranslationStatus.TRANSLATED;
+            case IN_PROGRESS -> TranslationStatus.IN_PROGRESS;
+            case PENDING -> TranslationStatus.PENDING;
+            case ERROR -> TranslationStatus.ERROR;
+            case NOT_CACHED -> TranslationStatus.NOT_CACHED;
+        };
     }
 }

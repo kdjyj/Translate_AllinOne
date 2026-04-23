@@ -61,14 +61,22 @@ public class ScoreboardTextCache {
     private final LinkedBlockingQueue<List<String>> batchWorkQueue = new LinkedBlockingQueue<>();
     private final Set<String> allQueuedOrInProgressKeys = ConcurrentHashMap.newKeySet();
     private final Map<String, String> errorCache = new ConcurrentHashMap<>();
+    private final CacheRuntimeStateSupport<String, List<String>> runtimeState = new CacheRuntimeStateSupport<>(
+            templateCache,
+            new CacheKeyQueueSupport<>(
+                    pendingQueue,
+                    inProgress,
+                    batchWorkQueue,
+                    allQueuedOrInProgressKeys,
+                    errorCache
+            )
+    );
+    private final CachePersistenceSupport persistence = new CachePersistenceSupport(SAVE_DEBOUNCE_MILLIS);
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "translate_allinone-scoreboard-cache-save");
         thread.setDaemon(true);
         return thread;
     });
-    private volatile boolean isDirty = false;
-    private volatile long lastSaveAtMillis = 0;
-    private volatile boolean saveScheduled = false;
 
     private ScoreboardTextCache() {
         this(resolveDefaultCachePath(), true);
@@ -84,18 +92,11 @@ public class ScoreboardTextCache {
     }
 
     public void clearPendingAndInProgress() {
-        if (!pendingQueue.isEmpty()) {
-            pendingQueue.clear();
-        }
-        if (!inProgress.isEmpty()) {
-            inProgress.clear();
-        }
-        allQueuedOrInProgressKeys.clear();
-        batchWorkQueue.clear();
+        runtimeState.queues().clearPendingAndInProgress();
     }
 
     public synchronized boolean isPendingQueueEmpty() {
-        return pendingQueue.isEmpty();
+        return runtimeState.queues().isPendingQueueEmpty();
     }
 
     public static ScoreboardTextCache getInstance() {
@@ -103,28 +104,20 @@ public class ScoreboardTextCache {
     }
 
     public synchronized void load() {
-        CacheLoadSupport.resetStateForLoad(
-                templateCache,
-                pendingQueue,
-                inProgress,
-                batchWorkQueue,
-                allQueuedOrInProgressKeys,
-                errorCache
-        );
-        isDirty = false;
-        saveScheduled = false;
+        runtimeState.resetForLoad();
+        persistence.resetForLoad();
         boolean shouldRewriteCacheFile = false;
 
         if (Files.exists(cacheFilePath)) {
             try {
                 LoadedEntries loadedEntries = loadEntriesWithBestCharset();
                 Map<String, String> loadedCache = loadedEntries.entries();
-                templateCache.putAll(loadedCache);
+                runtimeState.putLoadedEntries(loadedCache);
 
                 Translate_AllinOne.LOGGER.info(
                         "Successfully loaded {} scoreboard translation cache entries (in-memory total: {}).",
                         loadedCache.size(),
-                        templateCache.size()
+                        runtimeState.templateCache().size()
                 );
 
                 if (loadedEntries.duplicateKeyCount() > 0) {
@@ -157,17 +150,11 @@ public class ScoreboardTextCache {
             Translate_AllinOne.LOGGER.info("Scoreboard translation cache file not found, a new one will be created upon saving.");
         }
 
-        if (shouldRewriteCacheFile) {
-            isDirty = true;
-            scheduleSave();
-        } else {
-            isDirty = false;
-        }
+        persistence.finishLoad(shouldRewriteCacheFile, this::scheduleSave);
     }
 
     public synchronized void save() {
-        saveScheduled = false;
-        if (!isDirty) {
+        if (!persistence.beginSave()) {
             return;
         }
 
@@ -175,7 +162,7 @@ public class ScoreboardTextCache {
             Files.createDirectories(cacheFilePath.getParent());
             Path tempPath = cacheFilePath.resolveSibling(cacheFilePath.getFileName() + ".tmp");
             try (var writer = Files.newBufferedWriter(tempPath, CACHE_CHARSET)) {
-                GSON.toJson(templateCache, writer);
+                GSON.toJson(runtimeState.templateCache(), writer);
             }
 
             try {
@@ -184,12 +171,11 @@ public class ScoreboardTextCache {
                 Files.move(tempPath, cacheFilePath, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            Translate_AllinOne.LOGGER.info("Successfully saved {} scoreboard translation cache entries.", templateCache.size());
+            Translate_AllinOne.LOGGER.info("Successfully saved {} scoreboard translation cache entries.", runtimeState.templateCache().size());
             if (passiveBackupEnabled) {
                 CacheBackupManager.maybeBackup(cacheFilePath, "scoreboard translation");
             }
-            isDirty = false;
-            lastSaveAtMillis = System.currentTimeMillis();
+            persistence.finishSave();
         } catch (IOException e) {
             Translate_AllinOne.LOGGER.error("Failed to save scoreboard translation cache", e);
         }
@@ -370,67 +356,23 @@ public class ScoreboardTextCache {
     }
 
     public LookupResult lookupOrQueue(String originalTemplate) {
-        String translation = templateCache.get(originalTemplate);
-        if (translation != null && !translation.isEmpty()) {
-            return new LookupResult(TranslationStatus.TRANSLATED, translation, null);
-        }
+        return toLookupResult(runtimeState.lookupOrQueue(originalTemplate));
+    }
 
-        String errorMessage = errorCache.get(originalTemplate);
-        if (errorMessage != null) {
-            return new LookupResult(TranslationStatus.ERROR, "", errorMessage);
-        }
-
-        if (inProgress.contains(originalTemplate)) {
-            return new LookupResult(TranslationStatus.IN_PROGRESS, "", null);
-        }
-
-        if (allQueuedOrInProgressKeys.add(originalTemplate)) {
-            pendingQueue.offerLast(originalTemplate);
-        }
-
-        return new LookupResult(TranslationStatus.PENDING, "", null);
+    public LookupResult peek(String originalTemplate) {
+        return toLookupResult(runtimeState.peek(originalTemplate));
     }
 
     public TranslationStatus getTemplateStatus(String templateKey) {
-        if (errorCache.containsKey(templateKey)) {
-            return TranslationStatus.ERROR;
-        }
-        if (inProgress.contains(templateKey)) {
-            return TranslationStatus.IN_PROGRESS;
-        }
-        if (allQueuedOrInProgressKeys.contains(templateKey)) {
-            return TranslationStatus.PENDING;
-        }
-
-        if (templateCache.containsKey(templateKey)) {
-            String translation = templateCache.get(templateKey);
-            if (translation != null && !translation.isEmpty()) {
-                return TranslationStatus.TRANSLATED;
-            } else {
-                return TranslationStatus.PENDING;
-            }
-        }
-        
-        return TranslationStatus.NOT_CACHED;
+        return peek(templateKey).status();
     }
 
     public synchronized CacheStats getCacheStats() {
-        long translatedCount = templateCache.values().stream()
-                .filter(v -> v != null && !v.isEmpty())
-                .count();
-
-        Set<String> allKeys = ConcurrentHashMap.newKeySet();
-        allKeys.addAll(templateCache.keySet());
-        allKeys.addAll(pendingQueue);
-        allKeys.addAll(inProgress);
-
-        int totalCount = allKeys.size();
-
-        return new CacheStats((int) translatedCount, totalCount);
+        return new CacheStats((int) runtimeState.translatedCount(), runtimeState.totalCount());
     }
 
     public Set<String> getErroredKeys() {
-        return new java.util.HashSet<>(errorCache.keySet());
+        return runtimeState.copyErroredKeys();
     }
 
     public String getError(String templateKey) {
@@ -438,78 +380,76 @@ public class ScoreboardTextCache {
     }
 
     public List<String> drainAllPendingItems() {
-        List<String> items = new ArrayList<>();
-        pendingQueue.drainTo(items);
-        return items;
+        return runtimeState.queues().drainAllPendingItems();
     }
 
     public void submitBatchForTranslation(List<String> batch) {
         if (batch != null && !batch.isEmpty()) {
-            batchWorkQueue.offer(batch);
+            runtimeState.queues().submitBatch(batch);
         }
     }
 
     public List<String> takeBatchForTranslation() throws InterruptedException {
-        return batchWorkQueue.take();
+        return runtimeState.queues().takeBatch();
     }
     
     public void markAsInProgress(List<String> batch) {
-        inProgress.addAll(batch);
+        runtimeState.queues().markAsInProgress(batch);
     }
 
     public synchronized void requeueFromError(String key) {
-        if (errorCache.remove(key) != null) {
-            pendingQueue.offerFirst(key);
-        }
+        runtimeState.queues().requeueFromError(key);
     }
 
     public synchronized void releaseInProgress(Set<String> keys) {
-        if (keys == null || keys.isEmpty()) {
-            return;
-        }
-        inProgress.removeAll(keys);
-        allQueuedOrInProgressKeys.removeAll(keys);
+        runtimeState.queues().releaseInProgress(keys);
     }
 
     public synchronized void updateTranslations(Map<String, String> translations) {
         if (translations == null || translations.isEmpty()) {
             return;
         }
-        templateCache.putAll(translations);
-        
-        Set<String> finishedKeys = translations.keySet();
-        inProgress.removeAll(finishedKeys);
-        allQueuedOrInProgressKeys.removeAll(finishedKeys);
-        finishedKeys.forEach(errorCache::remove);
-        
-        isDirty = true;
+        runtimeState.updateTranslations(translations);
+        persistence.markDirty();
         Translate_AllinOne.LOGGER.info("Updated {} scoreboard translations in the cache.", translations.size());
 
         scheduleSave();
     }
 
     private synchronized void scheduleSave() {
-        long elapsed = System.currentTimeMillis() - lastSaveAtMillis;
-        if (elapsed >= SAVE_DEBOUNCE_MILLIS) {
+        CachePersistenceSupport.SaveSchedulePlan schedulePlan = persistence.planSave(false);
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SAVE_NOW) {
             save();
             return;
         }
-
-        if (saveScheduled) {
-            return;
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SCHEDULE_ASYNC) {
+            saveExecutor.schedule(this::save, schedulePlan.delayMillis(), TimeUnit.MILLISECONDS);
         }
-
-        long delayMillis = Math.max(0, SAVE_DEBOUNCE_MILLIS - elapsed);
-        saveScheduled = true;
-        saveExecutor.schedule(this::save, delayMillis, TimeUnit.MILLISECONDS);
     }
 
     public synchronized void requeueFailed(Set<String> failedKeys, String errorMessage) {
         if (failedKeys == null || failedKeys.isEmpty()) {
             return;
         }
-        inProgress.removeAll(failedKeys);
-        failedKeys.forEach(key -> errorCache.put(key, errorMessage));
+        runtimeState.queues().markErrored(failedKeys, errorMessage, errorMessage);
         Translate_AllinOne.LOGGER.warn("Marked {} scoreboard keys as errored. They will be retried later.", failedKeys.size());
     }
-} 
+
+    private LookupResult toLookupResult(CacheRuntimeStateSupport.LookupState lookupState) {
+        return new LookupResult(
+                toTranslationStatus(lookupState.status()),
+                lookupState.translation(),
+                lookupState.errorMessage()
+        );
+    }
+
+    private TranslationStatus toTranslationStatus(CacheRuntimeStateSupport.LookupStatus lookupStatus) {
+        return switch (lookupStatus) {
+            case TRANSLATED -> TranslationStatus.TRANSLATED;
+            case IN_PROGRESS -> TranslationStatus.IN_PROGRESS;
+            case PENDING -> TranslationStatus.PENDING;
+            case ERROR -> TranslationStatus.ERROR;
+            case NOT_CACHED -> TranslationStatus.NOT_CACHED;
+        };
+    }
+}

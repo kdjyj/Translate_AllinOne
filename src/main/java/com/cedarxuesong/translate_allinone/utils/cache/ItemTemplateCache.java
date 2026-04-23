@@ -83,14 +83,22 @@ public class ItemTemplateCache {
     private final LinkedBlockingQueue<BatchWorkItem> batchWorkQueue = new LinkedBlockingQueue<>();
     private final Set<String> allQueuedOrInProgressKeys = ConcurrentHashMap.newKeySet();
     private final Map<String, String> errorCache = new ConcurrentHashMap<>();
+    private final CacheRuntimeStateSupport<String, BatchWorkItem> runtimeState = new CacheRuntimeStateSupport<>(
+            templateCache,
+            new CacheKeyQueueSupport<>(
+                    pendingQueue,
+                    inProgress,
+                    batchWorkQueue,
+                    allQueuedOrInProgressKeys,
+                    errorCache
+            )
+    );
+    private final CachePersistenceSupport persistence = new CachePersistenceSupport(SAVE_DEBOUNCE_MILLIS);
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "translate_allinone-item-cache-save");
         thread.setDaemon(true);
         return thread;
     });
-    private volatile boolean isDirty = false;
-    private volatile long lastSaveAtMillis = 0;
-    private volatile boolean saveScheduled = false;
 
     private ItemTemplateCache() {
         this(resolveDefaultCachePath(), true);
@@ -110,28 +118,20 @@ public class ItemTemplateCache {
     }
 
     public synchronized void load() {
-        CacheLoadSupport.resetStateForLoad(
-                templateCache,
-                pendingQueue,
-                inProgress,
-                batchWorkQueue,
-                allQueuedOrInProgressKeys,
-                errorCache
-        );
-        isDirty = false;
-        saveScheduled = false;
+        runtimeState.resetForLoad();
+        persistence.resetForLoad();
         boolean shouldRewriteCacheFile = false;
 
         if (Files.exists(cacheFilePath)) {
             try {
                 LoadedEntries loadedEntries = loadEntriesWithBestCharset();
                 Map<String, String> loadedCache = loadedEntries.entries();
-                templateCache.putAll(loadedCache);
+                runtimeState.putLoadedEntries(loadedCache);
 
                 Translate_AllinOne.LOGGER.info(
                         "Successfully loaded {} item translation cache entries (in-memory total: {}).",
                         loadedCache.size(),
-                        templateCache.size()
+                        runtimeState.templateCache().size()
                 );
 
                 if (loadedEntries.duplicateKeyCount() > 0) {
@@ -164,18 +164,12 @@ public class ItemTemplateCache {
             Translate_AllinOne.LOGGER.info("Item translation cache file not found, a new one will be created upon saving.");
         }
 
-        if (shouldRewriteCacheFile) {
-            isDirty = true;
-            scheduleSave();
-        } else {
-            isDirty = false;
-        }
+        persistence.finishLoad(shouldRewriteCacheFile, this::scheduleSave);
     }
 
     public synchronized void save() {
         long saveStartedAtNanos = System.nanoTime();
-        saveScheduled = false;
-        if (!isDirty) {
+        if (!persistence.beginSave()) {
             logCacheHotspotIfDev("save-skip-clean", saveStartedAtNanos, "dirty=false");
             return;
         }
@@ -202,8 +196,8 @@ public class ItemTemplateCache {
             long moveElapsedNanos = System.nanoTime() - moveStartedAtNanos;
 
             if (sanitizedSnapshot.modifiedEntryCount() > 0) {
-                templateCache.clear();
-                templateCache.putAll(sanitizedSnapshot.entries());
+                runtimeState.templateCache().clear();
+                runtimeState.templateCache().putAll(sanitizedSnapshot.entries());
                 LOGGER.warn(
                         "Sanitized {} item cache entrie(s) containing invalid UTF-16 before saving.",
                         sanitizedSnapshot.modifiedEntryCount()
@@ -216,8 +210,7 @@ public class ItemTemplateCache {
                 CacheBackupManager.maybeBackup(cacheFilePath, "item translation");
             }
             long backupElapsedNanos = System.nanoTime() - backupStartedAtNanos;
-            isDirty = false;
-            lastSaveAtMillis = System.currentTimeMillis();
+            persistence.finishSave();
             logCacheSaveBreakdownIfDev(
                     saveStartedAtNanos,
                     sanitizeElapsedNanos,
@@ -394,10 +387,10 @@ public class ItemTemplateCache {
     }
 
     private SanitizedCacheSnapshot sanitizeForPersistence() {
-        Map<String, String> sanitizedEntries = new LinkedHashMap<>(templateCache.size());
+        Map<String, String> sanitizedEntries = new LinkedHashMap<>(runtimeState.templateCache().size());
         int modifiedEntryCount = 0;
 
-        for (Map.Entry<String, String> entry : templateCache.entrySet()) {
+        for (Map.Entry<String, String> entry : runtimeState.templateCache().entrySet()) {
             String originalKey = entry.getKey();
             String originalValue = entry.getValue();
             String sanitizedKey = sanitizeUtf16(originalKey);
@@ -465,47 +458,11 @@ public class ItemTemplateCache {
     }
 
     public LookupResult lookupOrQueue(String originalTemplate) {
-        String translation = templateCache.get(originalTemplate);
-        if (translation != null && !translation.isEmpty()) {
-            return new LookupResult(TranslationStatus.TRANSLATED, translation, null);
-        }
-
-        String errorMessage = errorCache.get(originalTemplate);
-        if (errorMessage != null) {
-            return new LookupResult(TranslationStatus.ERROR, "", errorMessage);
-        }
-
-        if (inProgress.contains(originalTemplate)) {
-            return new LookupResult(TranslationStatus.IN_PROGRESS, "", null);
-        }
-
-        if (allQueuedOrInProgressKeys.add(originalTemplate)) {
-            pendingQueue.offerLast(originalTemplate);
-        }
-
-        return new LookupResult(TranslationStatus.PENDING, "", null);
+        return toLookupResult(runtimeState.lookupOrQueue(originalTemplate));
     }
 
     public LookupResult peek(String originalTemplate) {
-        String translation = templateCache.get(originalTemplate);
-        if (translation != null && !translation.isEmpty()) {
-            return new LookupResult(TranslationStatus.TRANSLATED, translation, null);
-        }
-
-        String errorMessage = errorCache.get(originalTemplate);
-        if (errorMessage != null) {
-            return new LookupResult(TranslationStatus.ERROR, "", errorMessage);
-        }
-
-        if (inProgress.contains(originalTemplate)) {
-            return new LookupResult(TranslationStatus.IN_PROGRESS, "", null);
-        }
-
-        if (allQueuedOrInProgressKeys.contains(originalTemplate)) {
-            return new LookupResult(TranslationStatus.PENDING, "", null);
-        }
-
-        return new LookupResult(TranslationStatus.NOT_CACHED, "", null);
+        return toLookupResult(runtimeState.peek(originalTemplate));
     }
 
     public synchronized void promoteTranslation(String originalTemplate, String translation) {
@@ -514,17 +471,11 @@ public class ItemTemplateCache {
             return;
         }
 
-        templateCache.put(originalTemplate, translation);
-        errorCache.remove(originalTemplate);
-        inProgress.remove(originalTemplate);
-        allQueuedOrInProgressKeys.remove(originalTemplate);
-        int removedPendingCount = 0;
-        while (pendingQueue.remove(originalTemplate)) {
-            // Remove stale queued copies now that the translation has been migrated in-place.
-            removedPendingCount++;
-        }
-
-        isDirty = true;
+        int removedPendingCount = (int) pendingQueue.stream()
+                .filter(originalTemplate::equals)
+                .count();
+        runtimeState.promoteTranslation(originalTemplate, translation);
+        persistence.markDirty();
         scheduleSave();
         logCacheHotspotIfDev(
                 "promoteTranslation",
@@ -551,26 +502,17 @@ public class ItemTemplateCache {
         }
 
         int refreshedCount = 0;
+        List<String> refreshKeys = new ArrayList<>();
         for (String originalTemplate : originalTemplates) {
             if (originalTemplate == null || originalTemplate.isBlank()) {
                 continue;
             }
-
-            templateCache.remove(originalTemplate);
-            errorCache.remove(originalTemplate);
-            inProgress.remove(originalTemplate);
-            allQueuedOrInProgressKeys.remove(originalTemplate);
-            while (pendingQueue.remove(originalTemplate)) {
-                // Remove stale queued copies before pushing this refresh request to the front.
-            }
-
-            allQueuedOrInProgressKeys.add(originalTemplate);
-            pendingQueue.offerFirst(originalTemplate);
-            refreshedCount++;
+            refreshKeys.add(originalTemplate);
         }
+        refreshedCount = runtimeState.forceRefresh(refreshKeys);
 
         if (refreshedCount > 0) {
-            isDirty = true;
+            persistence.markDirty();
             Translate_AllinOne.LOGGER.info("Force-refreshed {} item translation cache entrie(s).", refreshedCount);
             scheduleSave();
         }
@@ -579,18 +521,7 @@ public class ItemTemplateCache {
     }
 
     public synchronized CacheStats getCacheStats() {
-        long translatedCount = templateCache.values().stream()
-                .filter(v -> v != null && !v.isEmpty())
-                .count();
-
-        Set<String> allKeys = ConcurrentHashMap.newKeySet();
-        allKeys.addAll(templateCache.keySet());
-        allKeys.addAll(pendingQueue);
-        allKeys.addAll(inProgress);
-
-        int totalCount = allKeys.size();
-
-        return new CacheStats((int) translatedCount, totalCount);
+        return new CacheStats((int) runtimeState.translatedCount(), runtimeState.totalCount());
     }
 
     public synchronized QueueSnapshot snapshotQueues() {
@@ -598,18 +529,16 @@ public class ItemTemplateCache {
     }
 
     public Set<String> getErroredKeys() {
-        return new java.util.HashSet<>(errorCache.keySet());
+        return runtimeState.copyErroredKeys();
     }
 
     public List<String> drainAllPendingItems() {
-        List<String> items = new ArrayList<>();
-        pendingQueue.drainTo(items);
-        return items;
+        return runtimeState.queues().drainAllPendingItems();
     }
 
     public void submitBatchForTranslation(long batchId, List<String> batch, long collectedAtNanos) {
         if (batch != null && !batch.isEmpty()) {
-            batchWorkQueue.offer(new BatchWorkItem(
+            runtimeState.queues().submitBatch(new BatchWorkItem(
                     batchId,
                     new ArrayList<>(batch),
                     collectedAtNanos,
@@ -619,39 +548,27 @@ public class ItemTemplateCache {
     }
 
     public BatchWorkItem takeBatchForTranslation() throws InterruptedException {
-        return batchWorkQueue.take();
+        return runtimeState.queues().takeBatch();
     }
     
     public void markAsInProgress(List<String> batch) {
-        inProgress.addAll(batch);
+        runtimeState.queues().markAsInProgress(batch);
     }
 
     public synchronized void requeueFromError(String key) {
-        if (errorCache.remove(key) != null) {
-            pendingQueue.offerFirst(key);
-        }
+        runtimeState.queues().requeueFromError(key);
     }
 
     public synchronized void releaseInProgress(Set<String> keys) {
-        if (keys == null || keys.isEmpty()) {
-            return;
-        }
-        inProgress.removeAll(keys);
-        allQueuedOrInProgressKeys.removeAll(keys);
+        runtimeState.queues().releaseInProgress(keys);
     }
 
     public synchronized void updateTranslations(Map<String, String> translations) {
         if (translations == null || translations.isEmpty()) {
             return;
         }
-        templateCache.putAll(translations);
-        
-        Set<String> finishedKeys = translations.keySet();
-        inProgress.removeAll(finishedKeys);
-        allQueuedOrInProgressKeys.removeAll(finishedKeys);
-        finishedKeys.forEach(errorCache::remove);
-        
-        isDirty = true;
+        runtimeState.updateTranslations(translations);
+        persistence.markDirty();
         Translate_AllinOne.LOGGER.info(
                 "Updated {} translations in the cache. queue={}",
                 translations.size(),
@@ -662,62 +579,37 @@ public class ItemTemplateCache {
     }
 
     private synchronized void scheduleSave() {
-        long elapsed = System.currentTimeMillis() - lastSaveAtMillis;
-        if (elapsed >= SAVE_DEBOUNCE_MILLIS) {
-            if (isRenderThread()) {
-                if (saveScheduled) {
-                    logCacheHotspotIfDev(
-                            "scheduleSave",
-                            0L,
-                            "mode=skip-already-scheduled-render-thread, lastSaveAgoMs=" + elapsed
-                    );
-                    return;
-                }
-
-                saveScheduled = true;
-                logCacheHotspotIfDev(
-                        "scheduleSave",
-                        0L,
-                        "mode=async-render-thread-immediate, lastSaveAgoMs=" + elapsed + ", delayMs=0"
-                );
-                saveExecutor.schedule(this::save, 0, TimeUnit.MILLISECONDS);
-                return;
-            }
-
+        CachePersistenceSupport.SaveSchedulePlan schedulePlan = persistence.planSave(isRenderThread());
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SKIP_ALREADY_SCHEDULED) {
             logCacheHotspotIfDev(
                     "scheduleSave",
                     0L,
-                    "mode=immediate, lastSaveAgoMs=" + elapsed + ", saveScheduled=" + saveScheduled
+                    "mode=skip-already-scheduled, lastSaveAgoMs=" + schedulePlan.elapsedMillis()
+            );
+            return;
+        }
+        if (schedulePlan.action() == CachePersistenceSupport.SaveScheduleAction.SAVE_NOW) {
+            logCacheHotspotIfDev(
+                    "scheduleSave",
+                    0L,
+                    "mode=immediate, lastSaveAgoMs=" + schedulePlan.elapsedMillis()
             );
             save();
             return;
         }
-
-        if (saveScheduled) {
-            logCacheHotspotIfDev(
-                    "scheduleSave",
-                    0L,
-                    "mode=skip-already-scheduled, lastSaveAgoMs=" + elapsed
-            );
-            return;
-        }
-
-        long delayMillis = Math.max(0, SAVE_DEBOUNCE_MILLIS - elapsed);
-        saveScheduled = true;
         logCacheHotspotIfDev(
                 "scheduleSave",
                 0L,
-                "mode=async-scheduled, lastSaveAgoMs=" + elapsed + ", delayMs=" + delayMillis
+                "mode=async, lastSaveAgoMs=" + schedulePlan.elapsedMillis() + ", delayMs=" + schedulePlan.delayMillis()
         );
-        saveExecutor.schedule(this::save, delayMillis, TimeUnit.MILLISECONDS);
+        saveExecutor.schedule(this::save, schedulePlan.delayMillis(), TimeUnit.MILLISECONDS);
     }
 
     public synchronized void requeueFailed(Set<String> failedKeys, String errorMessage) {
         if (failedKeys == null || failedKeys.isEmpty()) {
             return;
         }
-        inProgress.removeAll(failedKeys);
-        failedKeys.forEach(key -> errorCache.put(key, errorMessage));
+        runtimeState.queues().markErrored(failedKeys, errorMessage, errorMessage);
         LOGGER.warn(
                 "Marked {} keys as errored. They will be retried later. queue={} error=\"{}\"",
                 failedKeys.size(),
@@ -728,11 +620,11 @@ public class ItemTemplateCache {
 
     private QueueSnapshot snapshotQueuesUnsafe() {
         return new QueueSnapshot(
-                pendingQueue.size(),
-                batchWorkQueue.size(),
-                inProgress.size(),
-                errorCache.size(),
-                allQueuedOrInProgressKeys.size()
+                runtimeState.queues().pendingSize(),
+                runtimeState.queues().batchQueueSize(),
+                runtimeState.queues().inProgressSize(),
+                runtimeState.queues().erroredSize(),
+                runtimeState.queues().queuedOrInProgressSize()
         );
     }
 
@@ -829,5 +721,23 @@ public class ItemTemplateCache {
             return normalized;
         }
         return normalized.substring(0, Math.max(0, maxLength - 3)) + "...";
+    }
+
+    private LookupResult toLookupResult(CacheRuntimeStateSupport.LookupState lookupState) {
+        return new LookupResult(
+                toTranslationStatus(lookupState.status()),
+                lookupState.translation(),
+                lookupState.errorMessage()
+        );
+    }
+
+    private TranslationStatus toTranslationStatus(CacheRuntimeStateSupport.LookupStatus lookupStatus) {
+        return switch (lookupStatus) {
+            case TRANSLATED -> TranslationStatus.TRANSLATED;
+            case IN_PROGRESS -> TranslationStatus.IN_PROGRESS;
+            case PENDING -> TranslationStatus.PENDING;
+            case ERROR -> TranslationStatus.ERROR;
+            case NOT_CACHED -> TranslationStatus.NOT_CACHED;
+        };
     }
 }
