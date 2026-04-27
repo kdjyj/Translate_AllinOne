@@ -5,7 +5,8 @@ public enum RouteSlot {
     SCOREBOARD("scoreboard"),
     WYNNTILS_TASK_TRACKER("wynntils_task_tracker"),
     CHAT_INPUT("chat_input"),
-    CHAT_OUTPUT("chat_output");
+    CHAT_OUTPUT("chat_output"),
+    NPCDIALOG("npcdialog");
 
     private final String key;
 

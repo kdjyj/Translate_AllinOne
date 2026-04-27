@@ -4,6 +4,7 @@ import com.google.gson.annotations.SerializedName;
 
 public class WynnCraftConfig {
     public WynntilsTaskTrackerConfig wynntils_task_tracker = new WynntilsTaskTrackerConfig();
+    public NpcDialogueConfig npc_dialogue = new NpcDialogueConfig();
 
     public static class WynntilsTaskTrackerConfig {
         public boolean enabled = false;
@@ -12,6 +13,16 @@ public class WynnCraftConfig {
         public String target_language = "Chinese";
         public KeybindingConfig keybinding = new KeybindingConfig();
         @SerializedName(value = "debug", alternate = {"dev"})
+        public DebugConfig debug = new DebugConfig();
+    }
+
+    public static class NpcDialogueConfig {
+        public boolean enabled = false;
+        public boolean translate_dialogue = true;
+        public boolean translate_choices = true;
+        public String target_language = "Chinese";
+        public long debounce_ms = 300L;
+        public long stable_time_ms = 800L;
         public DebugConfig debug = new DebugConfig();
     }
 

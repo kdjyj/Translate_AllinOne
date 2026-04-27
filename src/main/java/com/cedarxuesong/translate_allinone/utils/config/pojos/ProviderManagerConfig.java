@@ -37,6 +37,7 @@ public class ProviderManagerConfig {
         routes.wynntils_task_tracker = normalizeRouteValue(routes.wynntils_task_tracker);
         routes.chat_input = normalizeRouteValue(routes.chat_input);
         routes.chat_output = normalizeRouteValue(routes.chat_output);
+        routes.npcdialog = normalizeRouteValue(routes.npcdialog);
     }
 
     public ApiProviderProfile findById(String id) {
@@ -116,5 +117,6 @@ public class ProviderManagerConfig {
         public String wynntils_task_tracker = "";
         public String chat_input = "";
         public String chat_output = "";
+        public String npcdialog = "";
     }
 }

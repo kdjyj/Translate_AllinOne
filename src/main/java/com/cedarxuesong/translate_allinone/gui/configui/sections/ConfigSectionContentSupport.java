@@ -576,6 +576,65 @@ public final class ConfigSectionContentSupport {
                 addGroupBox(groupBoxAdder, translator.t("group.route"), x, width, routeStart, routeStart + ROW_STEP);
                 y = routeStart + ROW_STEP;
 
+                // NPC Dialogue Configuration
+                y += GROUP_GAP;
+                if (wynnCraft.npc_dialogue == null) {
+                    wynnCraft.npc_dialogue = new WynnCraftConfig.NpcDialogueConfig();
+                }
+                if (wynnCraft.npc_dialogue.debug == null) {
+                    wynnCraft.npc_dialogue.debug = new WynnCraftConfig.DebugConfig();
+                }
+                WynnCraftConfig.NpcDialogueConfig npcDialogue = wynnCraft.npc_dialogue;
+
+                int dialogueStart = y;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.enabled"),
+                        () -> npcDialogue.enabled,
+                        value -> npcDialogue.enabled = value
+                );
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.translate_npc_dialogue"),
+                        () -> npcDialogue.translate_dialogue,
+                        value -> npcDialogue.translate_dialogue = value
+                );
+                y += ROW_STEP;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.translate_npc_choices"),
+                        () -> npcDialogue.translate_choices,
+                        value -> npcDialogue.translate_choices = value
+                );
+                y += ROW_STEP;
+                textFieldRowAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.target_language"),
+                        48,
+                        npcDialogue.target_language,
+                        translator.t("placeholder.target_language"),
+                        value -> npcDialogue.target_language = sanitizeLanguage(value),
+                        value -> true,
+                        true
+                );
+                y += ROW_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.npc_dialogue"), x, width, dialogueStart, y);
+
+                y += GROUP_GAP;
+                int dialogueRouteStart = y;
+                routeSelectorAdder.add(config.providerManager, RouteSlot.NPCDIALOG, x, y, width);
+                addGroupBox(groupBoxAdder, translator.t("group.route"), x, width, dialogueRouteStart, dialogueRouteStart + ROW_STEP);
+                y = dialogueRouteStart + ROW_STEP;
+
                 y += GROUP_GAP;
                 int overlayStart = y;
                 toggleAdder.add(

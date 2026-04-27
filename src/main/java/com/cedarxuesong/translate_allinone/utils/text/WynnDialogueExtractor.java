@@ -1,6 +1,7 @@
 package com.cedarxuesong.translate_allinone.utils.text;
 
 import com.cedarxuesong.translate_allinone.gui.overlay.DialogueOverlayRenderer;
+import com.cedarxuesong.translate_allinone.utils.translate.WynnDialogueTranslateManager;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
@@ -143,6 +144,7 @@ public class WynnDialogueExtractor {
                 choiceHistory.clear(); // 清理选项历史
                 lastRawChoices = "";
                 DialogueOverlayRenderer.updateDialogue("");
+                WynnDialogueTranslateManager.clearDialogue();
                 LOGGER.info("[WynnDialogue] Dialogue cleared.");
             }
         }
@@ -216,10 +218,11 @@ public class WynnDialogueExtractor {
             try {
                 long now = System.currentTimeMillis();
                 if (now - lastChangeTime >= STABLE_STORM_MS) {
-                    // 文本已稳定，输出最终结果
+                    // 文本已稳定，触发翻译处理
                     if (!lastStableText.isEmpty()) {
-                        DialogueOverlayRenderer.updateDialogue(lastStableText);
-                        LOGGER.info("[WynnDialogue] Stability Reached. Outputting:\n{}", lastStableText);
+                        LOGGER.info("[WynnDialogue] Stability Reached. Snapshot:\n{}", lastStableText);
+                        // 调用翻译管理器进行翻译
+                        WynnDialogueTranslateManager.translateDialogue(lastStableText);
                     }
                     isScheduled.set(false);
                 } else {

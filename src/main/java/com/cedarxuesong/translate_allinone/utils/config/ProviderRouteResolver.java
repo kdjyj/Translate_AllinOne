@@ -16,7 +16,8 @@ public final class ProviderRouteResolver {
         SCOREBOARD,
         WYNNTILS_TASK_TRACKER,
         CHAT_INPUT,
-        CHAT_OUTPUT
+        CHAT_OUTPUT,
+        NPCDIALOG
     }
 
     public static ApiProviderProfile resolve(ModConfig config, Route route) {
@@ -33,6 +34,7 @@ public final class ProviderRouteResolver {
             case WYNNTILS_TASK_TRACKER -> manager.routes.wynntils_task_tracker;
             case CHAT_INPUT -> manager.routes.chat_input;
             case CHAT_OUTPUT -> manager.routes.chat_output;
+            case NPCDIALOG -> manager.routes.npcdialog;
         };
 
         if (routeKey == null || routeKey.isBlank()) {

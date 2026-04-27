@@ -47,6 +47,7 @@ public final class RouteModelSectionSupport {
             case WYNNTILS_TASK_TRACKER -> manager.routes.wynntils_task_tracker;
             case CHAT_INPUT -> manager.routes.chat_input;
             case CHAT_OUTPUT -> manager.routes.chat_output;
+            case NPCDIALOG -> manager.routes.npcdialog;
         };
     }
 
@@ -57,6 +58,7 @@ public final class RouteModelSectionSupport {
             case WYNNTILS_TASK_TRACKER -> manager.routes.wynntils_task_tracker = routeKey;
             case CHAT_INPUT -> manager.routes.chat_input = routeKey;
             case CHAT_OUTPUT -> manager.routes.chat_output = routeKey;
+            case NPCDIALOG -> manager.routes.npcdialog = routeKey;
         }
     }
 
@@ -106,6 +108,9 @@ public final class RouteModelSectionSupport {
         }
         if (ProviderManagerConfig.extractProviderId(manager.routes.chat_output).equals(providerId)) {
             manager.routes.chat_output = "";
+        }
+        if (ProviderManagerConfig.extractProviderId(manager.routes.npcdialog).equals(providerId)) {
+            manager.routes.npcdialog = "";
         }
     }
 }
