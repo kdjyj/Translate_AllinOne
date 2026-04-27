@@ -574,7 +574,55 @@ public final class ConfigSectionContentSupport {
                 int routeStart = y;
                 routeSelectorAdder.add(config.providerManager, RouteSlot.WYNNTILS_TASK_TRACKER, x, y, width);
                 addGroupBox(groupBoxAdder, translator.t("group.route"), x, width, routeStart, routeStart + ROW_STEP);
-                return routeStart + ROW_STEP;
+                y = routeStart + ROW_STEP;
+
+                y += GROUP_GAP;
+                int overlayStart = y;
+                toggleAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.enabled"),
+                        () -> config.overlay.enabled,
+                        value -> config.overlay.enabled = value
+                );
+                y += ROW_STEP;
+                sliderAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.overlay_x"),
+                        0,
+                        1000,
+                        () -> config.overlay.x,
+                        value -> config.overlay.x = value
+                );
+                y += SLIDER_STEP;
+                sliderAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.overlay_y"),
+                        0,
+                        1000,
+                        () -> config.overlay.y,
+                        value -> config.overlay.y = value
+                );
+                y += SLIDER_STEP;
+                sliderAdder.add(
+                        x,
+                        y,
+                        width,
+                        translator.t("label.overlay_max_line_length"),
+                        10,
+                        100,
+                        () -> config.overlay.maxLineLength,
+                        value -> config.overlay.maxLineLength = value
+                );
+                y += SLIDER_STEP;
+                addGroupBox(groupBoxAdder, translator.t("group.overlay"), x, width, overlayStart, y);
+
+                return y;
             }
             case CACHE -> {
                 CacheBackupConfig resolvedCacheBackup = config.cacheBackup;

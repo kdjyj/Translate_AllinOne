@@ -4,6 +4,7 @@ import com.cedarxuesong.translate_allinone.utils.config.pojos.ChatTranslateConfi
 import com.cedarxuesong.translate_allinone.utils.config.pojos.CacheBackupConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.DebugConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ItemTranslateConfig;
+import com.cedarxuesong.translate_allinone.utils.config.pojos.OverlayConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ProviderManagerConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ScoreboardConfig;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.WynnCraftConfig;
@@ -20,6 +21,8 @@ public class ModConfig {
     public ScoreboardConfig scoreboardTranslate = new ScoreboardConfig();
 
     public WynnCraftConfig wynnCraft = new WynnCraftConfig();
+
+    public OverlayConfig overlay = new OverlayConfig();
 
     public CacheBackupConfig cacheBackup = new CacheBackupConfig();
 

@@ -6,6 +6,7 @@
   "mixins": [
   ],
   "client": [
+    "mixinNetwork.ClientPlayNetworkHandlerMixin",
     "mixinChatHud.ChatHudAccessor",
     "mixinChatHud.ChatHudInteractionMixin",
     "mixinChatHud.ChatHudMixin",

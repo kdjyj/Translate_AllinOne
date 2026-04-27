@@ -1,6 +1,7 @@
 package com.cedarxuesong.translate_allinone.mixin.mixinInGameGui;
 
 import com.cedarxuesong.translate_allinone.Translate_AllinOne;
+import com.cedarxuesong.translate_allinone.gui.overlay.DialogueOverlayRenderer;
 import com.cedarxuesong.translate_allinone.utils.AnimationManager;
 import com.cedarxuesong.translate_allinone.utils.cache.ScoreboardTextCache;
 import com.cedarxuesong.translate_allinone.utils.config.pojos.ScoreboardConfig;
@@ -44,6 +45,11 @@ public class InGameHudMixin {
 
     @Unique
     private static final ThreadLocal<Map<String, Text>> translate_allinone$scoreboardReplacements = new ThreadLocal<>();
+
+    @Inject(method = "render", at = @At("TAIL"))
+    private void onRender(DrawContext context, net.minecraft.client.render.RenderTickCounter tickCounter, CallbackInfo ci) {
+        DialogueOverlayRenderer.render(context, 0.0f);
+    }
 
     @Unique
     private Text translate_allinone$processTextForTranslation(Text originalText) {
